@@ -90,7 +90,7 @@ import autoTable from "jspdf-autotable";
 /*  just keeps showing the mock STATS_BY_RANGE / COUNTRY_ORDERS data     */
 /*  below, so the UI never breaks.                                      */
 /* ------------------------------------------------------------------ */
-const DASHBOARD_API_BASE = "http://127.0.0.1:8000/api/dashboard";
+const DASHBOARD_API_BASE = (import.meta.env?.VITE_API_BASE_URL || "http://127.0.0.1:8000") + "/api/dashboard";
 
 async function dashboardFetch(path) {
   const token = localStorage.getItem("hopenix_auth_token");

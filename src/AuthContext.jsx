@@ -14,11 +14,11 @@ const AuthContext = createContext(null);
 configureReportsApi({ getToken: () => localStorage.getItem("hopenix_auth_token") });
 
 // Django backend base URL. Change this if your backend runs somewhere else.
-const API_BASE_URL = "http://127.0.0.1:8000/api/auth";
+const API_BASE_URL = (import.meta.env?.VITE_API_BASE_URL || "http://127.0.0.1:8000") + "/api/auth";
 // Settings app (Company info, Notifications, Security/2FA, Billing, and
 // password changes) — a separate Django app (`settings/`), so it gets its
 // own base URL under /api/settings/.
-const SETTINGS_API_BASE_URL = "http://127.0.0.1:8000/api/settings";
+const SETTINGS_API_BASE_URL = (import.meta.env?.VITE_API_BASE_URL || "http://127.0.0.1:8000") + "/api/settings";
 
 /** Fetch wrapper that automatically attaches the saved auth Token header
  *  (DRF's TokenAuthentication expects "Authorization: Token <key>", NOT

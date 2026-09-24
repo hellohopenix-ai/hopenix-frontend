@@ -1,7 +1,7 @@
 // Real backend client for Messaging (Django REST Framework).
 // Token stored in localStorage under "hopenix_auth_token", sent as "Authorization: Token <key>".
 
-const API_BASE_URL = "http://127.0.0.1:8000/api/messages";
+const API_BASE_URL = (import.meta.env?.VITE_API_BASE_URL || "http://127.0.0.1:8000") + "/api/messages";
 
 async function apiFetch(path, options = {}) {
   const token = localStorage.getItem("hopenix_auth_token");

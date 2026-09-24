@@ -352,7 +352,7 @@ export function MessagingSocketProvider({ darkMode, children }) {
   useEffect(() => {
     if (!currentUser) return;
 
-    const API_HTTP_BASE = "http://127.0.0.1:8000";
+    const API_HTTP_BASE = import.meta.env?.VITE_API_BASE_URL || "http://127.0.0.1:8000";
     const WS_URL = API_HTTP_BASE.replace(/^http/, "ws") + "/ws/messages/";
     let cancelled = false;
 

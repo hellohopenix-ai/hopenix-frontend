@@ -76,7 +76,7 @@ function isMeetingMissed(m) {
 ===================================================================== */
 
 const API_BASE =
-  (typeof process !== "undefined" && process.env && process.env.REACT_APP_API_BASE_URL) || "http://127.0.0.1:8000";
+  (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.VITE_API_BASE_URL) || "http://127.0.0.1:8000";
 // Matches AuthContext.jsx exactly: `localStorage.getItem("hopenix_auth_token")`
 // and `Authorization: Token <key>` (DRF TokenAuthentication, not JWT/Bearer).
 const TOKEN_KEY = "hopenix_auth_token";

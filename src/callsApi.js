@@ -6,7 +6,7 @@
 // Django backend base URL (same host AuthContext.jsx and messagesApi.js
 // use — just a different path prefix). Change this if your backend
 // runs somewhere else.
-const API_BASE_URL = "http://127.0.0.1:8000/api/messages";
+const API_BASE_URL = (import.meta.env?.VITE_API_BASE_URL || "http://127.0.0.1:8000") + "/api/messages";
 
 async function apiFetch(path, options = {}) {
   const token = localStorage.getItem("hopenix_auth_token");

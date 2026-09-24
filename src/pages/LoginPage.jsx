@@ -176,7 +176,7 @@ function useEmailVerification(email) {
    being emailed — swap sendOtpEmail() for a real API call later.
 ---------------------------------------------------------------------- */
 
-const API_BASE_URL = "http://127.0.0.1:8000/api/auth";
+const API_BASE_URL = (import.meta.env?.VITE_API_BASE_URL || "http://127.0.0.1:8000") + "/api/auth";
 
 async function sendOtpEmail(email) {
   const res = await fetch(`${API_BASE_URL}/send-otp/`, {

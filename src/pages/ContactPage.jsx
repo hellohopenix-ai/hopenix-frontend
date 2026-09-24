@@ -71,7 +71,7 @@ const REASONS = [
 
 const SUBJECT_OPTIONS = ["General Inquiry", "Product Support", "Sales & Pricing", "Partnership", "Other"];
 
-const API_BASE_URL = "http://127.0.0.1:8000/api/auth";
+const API_BASE_URL = (import.meta.env?.VITE_API_BASE_URL || "http://127.0.0.1:8000") + "/api/auth";
 
 async function submitContactMessage({ name, email, subject, message }) {
   const res = await fetch(`${API_BASE_URL}/contact/`, {
