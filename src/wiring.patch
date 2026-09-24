@@ -1,0 +1,66 @@
+diff -ruN a/hopenix/settings.py b/hopenix/settings.py
+--- a/hopenix/settings.py	2026-09-21 14:10:39.459734221 +0000
++++ b/hopenix/settings.py	2026-09-21 14:10:39.462128375 +0000
+@@ -75,6 +75,7 @@
+     'employees',
+     'reports',
+     'visitors',
++    'coworking',
+ ]
+ 
+ MIDDLEWARE = [
+diff -ruN a/hopenix/urls.py b/hopenix/urls.py
+--- a/hopenix/urls.py	2026-09-21 14:10:39.465516328 +0000
++++ b/hopenix/urls.py	2026-09-21 14:10:39.466595709 +0000
+@@ -17,6 +17,7 @@
+    path('api/employees/', include('employees.urls')),
+     path('api/reports/', include('reports.urls')),
+    path('api/visitors/', include('visitors.urls')),
++    path('api/coworking/', include('coworking.urls')),
+ ]
+ 
+ # Serve uploaded files (CVs, etc.) in development. In production this
+diff -ruN a/reports/constants.py b/reports/constants.py
+--- a/reports/constants.py	2026-09-21 14:10:39.470127432 +0000
++++ b/reports/constants.py	2026-09-21 14:10:39.471205901 +0000
+@@ -9,7 +9,7 @@
+ MODULES = [
+     "Auth", "Users", "Employees", "Projects", "Tasks", "Clients", "Sales",
+     "Income", "Expenses", "Meetings", "Messages", "Settings", "Reports",
+-    "Dashboard", "General",
++    "Dashboard", "Coworking", "General",
+ ]
+ 
+ MODULE_TO_CATEGORY = {
+@@ -22,6 +22,7 @@
+     "Clients": "Client",
+     "Sales": "Sales",
+     "Tasks": "Task",
++    "Coworking": "Financial",
+ }
+ 
+ # First URL segment after /api/ -> module. Used only by the request-level
+@@ -38,6 +39,7 @@
+     "meetings": "Meetings",
+     "employees": "Employees",
+     "reports": "Reports",
++    "coworking": "Coworking",
+ }
+ 
+ # Actions a browser is allowed to report through POST /activity/track/.
+diff -ruN a/reports/signals.py b/reports/signals.py
+--- a/reports/signals.py	2026-09-21 14:10:39.474481976 +0000
++++ b/reports/signals.py	2026-09-21 14:10:39.475711428 +0000
+@@ -271,6 +271,12 @@
+     "employees.Announcement": Track("Employees", "announcement",
+                                     repr=lambda o: f"{o.type}" + (f" — {user_label(o.employee)}" if o.employee_id else ""),
+                                     summary=("type", "detail")),
++    # ---- coworking (chair rental). Payments are already covered by the Income row they create.
++    "coworking.CoworkingApplication": Track("Coworking", "coworking application",
++                                            repr=lambda o: f"{o.code} — {o.full_name}" if o.code else o.full_name,
++                                            summary=("status", "chairs", "duration", "monthly_payment")),
++    "coworking.CoworkingReview": Track("Coworking", "coworking review", repr=lambda o: f"{o.application.code} — {o.decision}",
++                                       summary=("decision", "approved_chairs", "approved_rate")),
+     # ---- messages (metadata only, never the text)
+     "messaging.Message": Track("Messages", "message", events=("create", "update"), only=("is_deleted",),
+                                describe=_describe_message),
