@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
+import { API_BASE_URL } from "../apiConfig.js";
 import {
   DollarSign,
   Wallet,
@@ -25,12 +26,7 @@ import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
 /* ------------------------------------------------------------------ */
 /*  Real backend wiring — Django REST + Postgres (dashboard.Income)   */
 /* ------------------------------------------------------------------ */
-// Apne dev/prod URL ke mutabiq badal dein, ya .env mein VITE_API_BASE_URL
-// set kar dein (Vite ise build time par yahan inject kar dega).
-const rawIncomeBase =
-  (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.VITE_API_BASE_URL) ||
-  "http://127.0.0.1:8000/api";
-const API_BASE_URL = rawIncomeBase.endsWith("/api") ? rawIncomeBase : `${rawIncomeBase.replace(/\/$/, "")}/api`;
+// API base URL comes from src/apiConfig.js (VITE_API_BASE_URL).
 const INCOME_ENDPOINT = `${API_BASE_URL}/dashboard/incomes/`;
 
 // AuthContext.jsx isi exact key ke naam se login token localStorage mein

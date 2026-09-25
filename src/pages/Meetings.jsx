@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { CalendarDays, CalendarPlus, Plus, X, Video, ChevronLeft, ChevronRight, Clock, CheckCircle2, Link as LinkIcon } from "lucide-react";
 import { useAuth, getRoleCategory } from "../AuthContext.jsx";
+import { API_ROOT } from "../apiConfig.js";
 
 /* =====================================================================
    DATE / TIME HELPERS
@@ -75,8 +76,7 @@ function isMeetingMissed(m) {
    expects, not "Bearer").
 ===================================================================== */
 
-const API_BASE =
-  (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.VITE_API_BASE_URL) || "http://127.0.0.1:8000";
+const API_BASE = API_ROOT;
 // Matches AuthContext.jsx exactly: `localStorage.getItem("hopenix_auth_token")`
 // and `Authorization: Token <key>` (DRF TokenAuthentication, not JWT/Bearer).
 const TOKEN_KEY = "hopenix_auth_token";

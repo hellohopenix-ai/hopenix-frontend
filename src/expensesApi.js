@@ -4,9 +4,11 @@
 // and see EXPENSES_BACKEND_GUIDE.md for exactly what to change inside
 // ExpensesPage.jsx to use it.
 
-// Same host/port AuthContext.jsx's API_BASE_URL uses ("http://127.0.0.1:8000/api/auth")
-// — change this if your backend runs somewhere else.
-const BASE_URL = (import.meta.env?.VITE_API_BASE_URL || "http://127.0.0.1:8000") + "/api/expenses/expenses";
+// Same host AuthContext.jsx's API_BASE_URL uses, from src/apiConfig.js
+// (VITE_API_BASE_URL) — change that env var if your backend runs elsewhere.
+import { API_ROOT } from "./apiConfig.js";
+
+const BASE_URL = `${API_ROOT}/api/expenses/expenses`;
 
 function authHeaders() {
   // Same key AuthContext.jsx saves the DRF token under after login.

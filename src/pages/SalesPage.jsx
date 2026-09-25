@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import { API_BASE_URL as API_BASE } from "../apiConfig.js";
 import {
   ChevronDown,
   ChevronLeft,
@@ -97,11 +98,7 @@ const PAGE_SIZE = 7;
 /*  this page already worked with, just persisted for real now.       */
 /* ------------------------------------------------------------------ */
 
-// Adjust if your app serves the API from a different origin.
-const rawSalesBase =
-  (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.VITE_API_BASE_URL) ||
-  "http://127.0.0.1:8000/api";
-const API_BASE = rawSalesBase.endsWith("/api") ? rawSalesBase : `${rawSalesBase.replace(/\/$/, "")}/api`;
+// API base URL comes from src/apiConfig.js (VITE_API_BASE_URL).
 
 // Adjust this key if the rest of your app stores the auth token under a
 // different localStorage key (e.g. "authToken", "hopenix_token").

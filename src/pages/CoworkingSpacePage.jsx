@@ -39,6 +39,7 @@ import image1 from "../assets/image1.jpg";
 import image2 from "../assets/image2.jpg";
 import image3 from "../assets/image3.jpg";
 import phoenixLogo from "../assets/phoenix-logo.png";
+import { API_BASE_URL } from "../apiConfig.js";
 
 /* ------------------------------------------------------------------ */
 /*  Coworking backend wiring — Django app `coworking`                   */
@@ -47,10 +48,6 @@ import phoenixLogo from "../assets/phoenix-logo.png";
 /*  as received also writes the matching dashboard.Income row on the    */
 /*  server, so IncomePage shows it without any refresh on this side.    */
 /* ------------------------------------------------------------------ */
-const rawCoworkingBase =
-  (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.VITE_API_BASE_URL) ||
-  "http://127.0.0.1:8000/api";
-const API_BASE_URL = rawCoworkingBase.endsWith("/api") ? rawCoworkingBase : `${rawCoworkingBase.replace(/\/$/, "")}/api`;
 const COWORKING_ENDPOINT = `${API_BASE_URL}/coworking/applications/`;
 const COWORKING_SETTINGS_ENDPOINT = `${API_BASE_URL}/coworking/settings/`;
 

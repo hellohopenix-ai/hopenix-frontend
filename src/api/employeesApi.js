@@ -11,8 +11,7 @@
 // Adjust API_BASE_URL / TOKEN_KEYS below if your AuthContext stores the
 // backend URL or auth token differently.
 
-const rawBase = import.meta.env?.VITE_API_BASE_URL || "http://127.0.0.1:8000/api";
-const API_BASE_URL = rawBase.endsWith("/api") ? rawBase : `${rawBase.replace(/\/$/, "")}/api`;
+import { API_BASE_URL } from "../apiConfig.js";
 
 // Confirmed from the browser's actual localStorage keys: AuthContext
 // saves the DRF token under "hopenix_auth_token". The others are kept as

@@ -3,7 +3,9 @@
 // Token stored in localStorage under "hopenix_auth_token", sent as
 // "Authorization: Token <key>" (DRF TokenAuthentication, not JWT/Bearer).
 
-const API_BASE_URL = (import.meta.env?.VITE_API_BASE_URL || "http://127.0.0.1:8000") + "/api/projects";
+import { API_ROOT } from "./apiConfig.js";
+
+const API_BASE_URL = `${API_ROOT}/api/projects`;
 
 /** Fetch wrapper for JSON endpoints. For file uploads, pass a FormData
  *  body — Content-Type is intentionally left unset so the browser adds

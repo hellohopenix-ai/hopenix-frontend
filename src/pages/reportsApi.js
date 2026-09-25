@@ -12,6 +12,7 @@
 /*    import { configureReportsApi } from "./pages/reportsApi.js";     */
 /*    configureReportsApi({ getToken: () => yourTokenVariable });      */
 /* ------------------------------------------------------------------ */
+import { API_ROOT } from "../apiConfig.js";
 
 const TOKEN_RE = /^[a-f0-9]{40}$/i;
 
@@ -34,11 +35,8 @@ function discoverToken() {
   return null;
 }
 
-const rawReportsBase = (typeof import.meta !== "undefined" && (import.meta.env?.VITE_API_URL || import.meta.env?.VITE_API_BASE_URL)) || "http://127.0.0.1:8000";
-const cleanReportsBase = rawReportsBase.replace(/\/api\/?$/, "").replace(/\/$/, "");
-
 const config = {
-  baseUrl: cleanReportsBase,
+  baseUrl: API_ROOT,
   getToken: discoverToken,
 };
 

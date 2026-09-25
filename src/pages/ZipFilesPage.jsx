@@ -18,6 +18,7 @@ import {
   FileText,
 } from "lucide-react";
 import { useAuth } from "../AuthContext.jsx";
+import { API_ROOT } from "../apiConfig.js";
 
 /* ======================================================================
    ZIP FILES (ADMIN) PAGE — now backed by the real API instead of
@@ -57,15 +58,8 @@ import { useAuth } from "../AuthContext.jsx";
 ====================================================================== */
 
 // Base URL of the Django API. Point this at wherever the backend is
-// actually running — same value you already use for every other page's
-// fetch/axios calls. If you keep a shared constant elsewhere (e.g. an
-// api.js / axios instance), delete this line and import that instead —
-// this file only defines it locally so it works standalone.
-// AuthContext.jsx's own API_BASE_URL points at "http://127.0.0.1:8000/api/auth"
-// — matching that host here (127.0.0.1:8000) instead of "localhost" avoids
-// any confusion, though both resolve the same for a local Django server.
-const rawZipBase = import.meta.env?.VITE_API_BASE_URL || "http://127.0.0.1:8000";
-const API_BASE_URL = rawZipBase.replace(/\/api\/?$/, "").replace(/\/$/, "");
+// API root comes from src/apiConfig.js (VITE_API_BASE_URL).
+const API_BASE_URL = API_ROOT;
 
 // Remembers that this browser tab already unlocked the page, so
 // switching to another sidebar tab and back doesn't ask again — closing

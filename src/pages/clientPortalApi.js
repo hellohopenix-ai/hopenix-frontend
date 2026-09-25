@@ -14,9 +14,9 @@
    domain/reverse proxy as the API.
 ====================================================================== */
 
-const rawPortalBase = import.meta.env?.VITE_API_BASE_URL || "http://127.0.0.1:8000/api";
-const hostBase = rawPortalBase.replace(/\/api\/?$/, "").replace(/\/$/, "");
-const BASE = `${hostBase}/api/dashboard`;
+import { API_BASE_URL as API_ROOT_BASE } from "../apiConfig.js";
+
+const BASE = `${API_ROOT_BASE}/dashboard`;
 
 async function request(path, { method = "GET", token, body, isForm } = {}) {
   const headers = {};

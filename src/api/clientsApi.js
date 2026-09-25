@@ -25,9 +25,7 @@
 // this file silently 404'd because the path builders below always assume
 // API_BASE_URL already ends in "/api".) This now matches
 // clientPortalApi.js's own hostBase normalization exactly.
-const rawBase = import.meta.env?.VITE_API_BASE_URL || "http://127.0.0.1:8000/api";
-const hostBase = rawBase.replace(/\/api\/?$/, "").replace(/\/$/, "");
-const API_BASE_URL = `${hostBase}/api`;
+import { API_BASE_URL } from "../apiConfig.js";
 const TOKEN_KEY = "hopenix_auth_token";
 
 async function apiFetch(path, options = {}) {

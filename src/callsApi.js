@@ -3,10 +3,11 @@
 // handling) so MessagesPage.jsx's call feature talks to the backend the
 // same way its messages already do.
 
-// Django backend base URL (same host AuthContext.jsx and messagesApi.js
-// use — just a different path prefix). Change this if your backend
-// runs somewhere else.
-const API_BASE_URL = (import.meta.env?.VITE_API_BASE_URL || "http://127.0.0.1:8000") + "/api/messages";
+// Django backend base URL comes from src/apiConfig.js (VITE_API_BASE_URL) —
+// same host AuthContext.jsx and messagesApi.js use, just a different path.
+import { API_ROOT } from "./apiConfig.js";
+
+const API_BASE_URL = `${API_ROOT}/api/messages`;
 
 async function apiFetch(path, options = {}) {
   const token = localStorage.getItem("hopenix_auth_token");

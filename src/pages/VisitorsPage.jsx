@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useAuth } from "../AuthContext.jsx";
+import { API_BASE_URL } from "../apiConfig.js";
 import {
   UserPlus2,
   Search,
@@ -59,9 +60,8 @@ import {
 /*  visitors/serializers.py — so nothing below this needed to change      */
 /*  shape, only where the data comes from.                                */
 /* ------------------------------------------------------------------ */
-const rawVisitorsBase = import.meta.env?.VITE_API_BASE_URL || "http://127.0.0.1:8000/api";
-const API_BASE = rawVisitorsBase.endsWith("/api") ? rawVisitorsBase : `${rawVisitorsBase.replace(/\/$/, "")}/api`;
-const VISITORS_API_BASE = `${API_BASE}/visitors`;
+// API base URL comes from src/apiConfig.js (VITE_API_BASE_URL).
+const VISITORS_API_BASE = `${API_BASE_URL}/visitors`;
 
 async function visitorsApiFetch(path, options = {}) {
   const token = localStorage.getItem("hopenix_auth_token");

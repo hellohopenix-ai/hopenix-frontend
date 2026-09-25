@@ -15,7 +15,9 @@
 // gets them into the call in time, same practical effect as a native
 // app "ringing" for the couple of seconds before you pick up.
 
-const API_BASE_URL = (import.meta.env?.VITE_API_BASE_URL || "http://127.0.0.1:8000") + "/api/messages"; // same host callsApi.js uses
+import { API_ROOT } from "./apiConfig.js";
+
+const API_BASE_URL = `${API_ROOT}/api/messages`; // same host callsApi.js uses
 
 // Paste the PUBLIC key printed by `npx web-push generate-vapid-keys`.
 // The backend gets the matching PRIVATE key via hopenix/settings.py + .env.

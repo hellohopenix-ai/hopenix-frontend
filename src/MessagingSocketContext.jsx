@@ -9,6 +9,7 @@ import {
   fetchActiveIncomingCall as apiFetchActiveIncomingCall,
 } from "./callsApi.js";
 import { ensurePushSubscribed } from "./pushSubscription.js";
+import { API_ROOT } from "./apiConfig.js";
 
 /* ---------------------------------------------------------------------
  * WHY THIS FILE EXISTS
@@ -352,7 +353,7 @@ export function MessagingSocketProvider({ darkMode, children }) {
   useEffect(() => {
     if (!currentUser) return;
 
-    const API_HTTP_BASE = import.meta.env?.VITE_API_BASE_URL || "http://127.0.0.1:8000";
+    const API_HTTP_BASE = API_ROOT;
     const WS_URL = API_HTTP_BASE.replace(/^http/, "ws") + "/ws/messages/";
     let cancelled = false;
 

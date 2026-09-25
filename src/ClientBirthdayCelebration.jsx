@@ -6,6 +6,7 @@ import {
   isCelebrationDismissedToday,
   markCelebrationDismissedToday,
 } from "./birthdayMessageDelivery.js";
+import { API_ROOT } from "./apiConfig.js";
 
 /* ===========================================================================
    ClientBirthdayCelebration
@@ -33,8 +34,7 @@ import {
 // (Client.date_of_birth), so when the `client` prop has no DOB this asks
 // the server for it directly — the logged-in client can read their own row
 // (GET /api/dashboard/clients/<id>/, same session token the portal uses).
-const rawApiBase = import.meta.env?.VITE_API_BASE_URL || "http://127.0.0.1:8000/api";
-const API_HOST = rawApiBase.replace(/\/api\/?$/, "").replace(/\/$/, "");
+const API_HOST = API_ROOT;
 const PORTAL_SESSION_KEY = "clientportal_session_v1";
 
 async function fetchOwnDateOfBirth(clientId) {

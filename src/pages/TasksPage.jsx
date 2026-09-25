@@ -45,6 +45,7 @@ import { sendMessage as apiSendMessage } from "../messagesApi.js";
 // project/module/sub-module's backendId through untouched), it just
 // never called the backend with it. See syncModuleStatusToClientsStorage.
 import * as clientsApi from "../api/clientsApi.js";
+import { API_ROOT } from "../apiConfig.js";
 
 /* ======================================================================
    BACKEND API (tasks app — see hopenix-backend/tasks/)
@@ -55,16 +56,8 @@ import * as clientsApi from "../api/clientsApi.js";
    cache/fallback, but the backend is now the source of truth — this is
    what actually replaces the old "fake data" with real, persisted data.
 ====================================================================== */
-// FIX (Priority 1/2 — same hardcoded-localhost bug already fixed in
-// clientsApi.js): this used to be a literal "http://127.0.0.1:8000/api/tasks"
-// with no way to point it anywhere else, so every call in this file 404'd
-// or never reached Django whenever the app wasn't served from that exact
-// host/port. Now reads VITE_API_BASE_URL the same way clientsApi.js does,
-// normalized to always end in "/api/tasks" regardless of whether the env
-// var itself includes "/api" or not.
-const rawTasksBase = import.meta.env?.VITE_API_BASE_URL || "http://127.0.0.1:8000/api";
-const tasksHostBase = rawTasksBase.replace(/\/api\/?$/, "").replace(/\/$/, "");
-const TASKS_API_BASE = `${tasksHostBase}/api/tasks`;
+// API base URL comes from src/apiConfig.js (VITE_API_BASE_URL).
+const TASKS_API_BASE = `${API_ROOT}/api/tasks`;
 
 async function tasksApiFetch(path, options = {}) {
   const token = localStorage.getItem("hopenix_auth_token");

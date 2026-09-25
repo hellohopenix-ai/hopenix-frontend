@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect, useCallback } from "react";
 import { ensurePushSubscribed, clearPushSubscription } from "./pushSubscription";
 import { configureReportsApi } from "./pages/reportsApi.js";
+import { API_ROOT } from "./apiConfig.js";
 
 const AuthContext = createContext(null);
 
@@ -13,12 +14,12 @@ const AuthContext = createContext(null);
 // explicitly to the exact key this file uses removes that ambiguity.
 configureReportsApi({ getToken: () => localStorage.getItem("hopenix_auth_token") });
 
-// Django backend base URL. Change this if your backend runs somewhere else.
-const API_BASE_URL = (import.meta.env?.VITE_API_BASE_URL || "http://127.0.0.1:8000") + "/api/auth";
+// Django backend base URL comes from src/apiConfig.js (VITE_API_BASE_URL).
+const API_BASE_URL = `${API_ROOT}/api/auth`;
 // Settings app (Company info, Notifications, Security/2FA, Billing, and
 // password changes) — a separate Django app (`settings/`), so it gets its
 // own base URL under /api/settings/.
-const SETTINGS_API_BASE_URL = (import.meta.env?.VITE_API_BASE_URL || "http://127.0.0.1:8000") + "/api/settings";
+const SETTINGS_API_BASE_URL = `${API_ROOT}/api/settings`;
 
 /** Fetch wrapper that automatically attaches the saved auth Token header
  *  (DRF's TokenAuthentication expects "Authorization: Token <key>", NOT
