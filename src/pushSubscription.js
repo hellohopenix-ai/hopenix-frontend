@@ -21,7 +21,7 @@ const API_BASE_URL = `${API_ROOT}/api/messages`; // same host callsApi.js uses
 
 // Paste the PUBLIC key printed by `npx web-push generate-vapid-keys`.
 // The backend gets the matching PRIVATE key via hopenix/settings.py + .env.
-const VAPID_PUBLIC_KEY = "PASTE_YOUR_VAPID_PUBLIC_KEY_HERE";
+const VAPID_PUBLIC_KEY = "BJcYjFfxa7wN95cOpokMfRbwnlYqMllQ_y6xluK4lFfvPKHi2rxq7bxuR5XvqbZzV04TBzNh63F9vFcfORpKHuM";
 
 function urlBase64ToUint8Array(base64String) {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
