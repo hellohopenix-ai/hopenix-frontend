@@ -124,33 +124,12 @@ const INITIAL_ROLES = [
   { name: "Accountant", tag: null, access: "Custom Access", locked: false },
 ];
 
-/* Local-storage key used to persist Role Management (the free-text roles
-   list in the left card) so it survives refreshes / next-day visits,
-   without touching the AuthContext-backed user data above. Module Access
-   Control (view/create/edit/delete) used to have its own disconnected
-   localStorage key here too — it's now backed for real by AuthContext's
-   `modulePermissions` (per role, actually enforced app-wide), so there is
-   nothing module-related left to store locally. */
-const ROLES_STORAGE_KEY = "userpage_roles_v1";
-
-function loadFromStorage(key, fallback) {
-  try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return fallback;
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-function saveToStorage(key, value) {
-  try {
-    localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    // storage unavailable (e.g. private mode) — fail silently, UI still works in-memory
-  }
-}
+/* Role Management (the free-text roles list in the left card) now lives
+   on the backend — see AuthContext's roleCatalog. Module Access Control
+   (view/create/edit/delete) also went through the same localStorage ->
+   real-backend migration earlier, backed by AuthContext's
+   `modulePermissions` (per role, actually enforced app-wide). Nothing in
+   this file reads or writes localStorage for role data anymore. */
 
 /* ======================================================================
    HELPERS
@@ -804,6 +783,9 @@ export default function UserPage({ darkMode = false }) {
     updateSubPageAccess,
     aiAssistantEnabled,
     setAiAssistantEnabled,
+    roleCatalog,
+    createRoleCatalogEntry,
+    deleteRoleCatalogEntry,
   } = useAuth();
 
   // Real, shared user records from AuthContext, reshaped into the fields
@@ -837,14 +819,12 @@ export default function UserPage({ darkMode = false }) {
     [authUsers]
   );
 
-  // Role Management + Module Access Control are persisted to localStorage
-  // so anything added/changed here survives refreshes and stays put the
-  // next day too, until explicitly deleted/edited again.
-  const [roles, setRoles] = useState(() => loadFromStorage(ROLES_STORAGE_KEY, INITIAL_ROLES));
-
-  useEffect(() => {
-    saveToStorage(ROLES_STORAGE_KEY, roles);
-  }, [roles]);
+  // Role Management (the free-text role directory) now lives on the
+  // backend — see AuthContext's roleCatalog / createRoleCatalogEntry /
+  // deleteRoleCatalogEntry. `roles` falls back to INITIAL_ROLES only
+  // while the fetch is still in flight (roleCatalog === null); once it
+  // resolves this is always the real, shared list.
+  const roles = roleCatalog ?? INITIAL_ROLES;
 
   // Which role's row is currently being edited in the Module Access
   // Control table below. Module permissions are per-role (real,
@@ -1198,18 +1178,27 @@ export default function UserPage({ darkMode = false }) {
 
   const accessModalUser = accessModalUserId ? users.find((u) => String(u.id) === String(accessModalUserId)) : null;
 
-  const createRole = () => {
+  const createRole = async () => {
     if (!newRoleForm?.name) return;
-    setRoles((r) => [...r, { name: newRoleForm.name, tag: null, access: newRoleForm.access, locked: false }]);
-    setNewRoleForm(null);
-    showToast(`Role "${newRoleForm.name}" created.`, "success");
+    const result = await createRoleCatalogEntry(newRoleForm.name, "", newRoleForm.access);
+    if (result.success) {
+      setNewRoleForm(null);
+      showToast(`Role "${newRoleForm.name}" created.`, "success");
+    } else {
+      showToast(result.error || "Could not create role — check your connection", "error");
+    }
   };
 
   // Roles persist until explicitly deleted here (Super Admin stays locked
-  // and can't be removed, since it's the built-in system role).
-  const deleteRole = (name) => {
-    setRoles((r) => r.filter((role) => role.name !== name));
-    showToast(`Role "${name}" deleted.`, "error");
+  // and can't be removed — enforced both here, via the missing delete
+  // button, and server-side in RoleCatalogView).
+  const deleteRole = async (role) => {
+    const result = await deleteRoleCatalogEntry(role.id);
+    if (result.success) {
+      showToast(`Role "${role.name}" deleted.`, "error");
+    } else {
+      showToast(result.error || "Could not delete role — check your connection", "error");
+    }
   };
 
   const tabDefs = [
@@ -1558,7 +1547,7 @@ export default function UserPage({ darkMode = false }) {
             <p className={`text-xs mb-3 ${subtleText}`}>Create and manage roles for your organization. Roles stay saved until you delete them.</p>
             <ul className="space-y-2 mb-3">
               {roles.map((r) => (
-                <li key={r.name} className="flex items-center justify-between text-sm gap-2">
+                <li key={r.id ?? r.name} className="flex items-center justify-between text-sm gap-2">
                   <span className={`font-semibold flex items-center gap-2 min-w-0 ${cardText}`}>
                     <span className="truncate">{r.name}</span>
                     {r.tag && <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded shrink-0 ${darkMode ? "bg-slate-800 text-slate-400" : "bg-slate-100 text-slate-500"}`}>{r.tag}</span>}
@@ -1567,7 +1556,7 @@ export default function UserPage({ darkMode = false }) {
                     <span className={`text-xs ${subtleText}`}>{r.access}</span>
                     {!r.locked && (
                       <button
-                        onClick={() => deleteRole(r.name)}
+                        onClick={() => deleteRole(r)}
                         className="w-6 h-6 flex items-center justify-center rounded-md text-rose-500 hover:bg-rose-50"
                         aria-label={`Delete ${r.name} role`}
                         title="Delete role"

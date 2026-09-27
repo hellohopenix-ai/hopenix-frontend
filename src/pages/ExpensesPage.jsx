@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import {
   fetchExpenses,
+  fetchExpenseFilters,
   createExpense,
   updateExpense,
   deleteExpense,
@@ -62,28 +63,6 @@ const STATUS_STYLES = {
 };
 
 const PAGE_SIZE = 7;
-const CATEGORIES_STORAGE_KEY = "expenses_custom_categories_v1";
-
-function loadStoredCategories() {
-  try {
-    const raw = window.localStorage.getItem(CATEGORIES_STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) return parsed;
-    }
-  } catch (e) {
-    /* ignore corrupt storage, fall back to none */
-  }
-  return [];
-}
-
-function persistCategories(list) {
-  try {
-    window.localStorage.setItem(CATEGORIES_STORAGE_KEY, JSON.stringify(list));
-  } catch (e) {
-    /* storage full/unavailable — fail silently, app still works in-memory */
-  }
-}
 
 function emptyForm() {
   return {
@@ -249,7 +228,15 @@ export default function ExpensesPage({ darkMode }) {
   const [expenses, setExpenses] = useState([]);
   const [loadingExpenses, setLoadingExpenses] = useState(true);
   const [loadError, setLoadError] = useState("");
-  const [customCategories, setCustomCategories] = useState(loadStoredCategories);
+  // Custom (non-CATEGORY_META) category names — real ones, saved on real
+  // Expense rows in Postgres, not a per-browser localStorage list. Backed
+  // by GET /api/expenses/expenses/filters/, which returns every distinct
+  // category value actually in the table; a brand-new one typed into the
+  // add-expense form (see handleSubmit) is appended here immediately too,
+  // so it shows up in this session's dropdown before the save round-trip
+  // finishes — no separate persistence needed since the category is
+  // already part of the Expense row being saved.
+  const [customCategories, setCustomCategories] = useState([]);
   const [page, setPage] = useState(1);
 
   // filters
@@ -306,10 +293,24 @@ export default function ExpensesPage({ darkMode }) {
     reloadExpenses();
   }, []);
 
-  /* persist any change to manually-added categories */
+  /* load categories already in use (shared across everyone, not just this
+     browser) so the dropdown/filters reflect the real, current set */
   useEffect(() => {
-    persistCategories(customCategories);
-  }, [customCategories]);
+    let cancelled = false;
+    fetchExpenseFilters()
+      .then((data) => {
+        if (cancelled) return;
+        const known = new Set(Object.keys(CATEGORY_META));
+        const extra = (data?.categories || []).filter((c) => c && !known.has(c));
+        setCustomCategories((prev) => Array.from(new Set([...prev, ...extra])));
+      })
+      .catch((err) => {
+        console.error("Could not load expense categories from backend:", err.message);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   /* close the 3-dot menu on outside click */
   useEffect(() => {

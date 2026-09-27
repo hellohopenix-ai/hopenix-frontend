@@ -475,6 +475,12 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [rolePermissions, setRolePermissions] = useState(() => loadRolePermissions());
+  // Role Management card's directory of role labels (name/tag/access,
+  // separate from rolePermissions above, which is page-level access per
+  // role category). null while loading; falls back to these same six
+  // defaults on fetch failure, matching what the backend migration seeds
+  // a fresh install with, so the UI looks the same either way.
+  const [roleCatalog, setRoleCatalog] = useState(null);
   const [modulePermissions, setModulePermissions] = useState(() => loadModulePermissions());
   const [userAccessOverrides, setUserAccessOverrides] = useState(() => loadUserAccessOverrides());
   const [subPageAccessOverrides, setSubPageAccessOverrides] = useState(() => loadSubPageAccessOverrides());
@@ -503,6 +509,19 @@ export function AuthProvider({ children }) {
       setRolePermissions((prev) => ({ ...DEFAULT_ROLE_PERMISSIONS, ...prev, ...data }));
     } catch (err) {
       console.error("Could not load role permissions from backend:", err.message);
+    }
+  }, []);
+
+  /** GET /role-catalog/ -> the Role Management card's list. Used to be
+   *  localStorage-only (userpage_roles_v1), so a role added by one admin
+   *  on one browser was invisible to every other admin/browser and lost
+   *  on clearing site data — this is the real, shared version. */
+  const refreshRoleCatalog = useCallback(async () => {
+    try {
+      const data = await apiFetch("/role-catalog/");
+      setRoleCatalog(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error("Could not load the role catalog from backend:", err.message);
     }
   }, []);
 
@@ -589,11 +608,12 @@ export function AuthProvider({ children }) {
         refreshRolePermissions(),
         refreshModulePermissions(),
         refreshAccessOverrides(list),
+        refreshRoleCatalog(),
       ]);
     } catch {
       // Non-admins get a 403 here, which is expected — just leave users empty.
     }
-  }, [refreshRolePermissions, refreshModulePermissions, refreshAccessOverrides]);
+  }, [refreshRolePermissions, refreshModulePermissions, refreshAccessOverrides, refreshRoleCatalog]);
 
   // Any logged-in user (admin, manager, employee, ...) can call this —
   // see the approvedUsersLite comment above for why it exists separately
@@ -1420,6 +1440,38 @@ export function AuthProvider({ children }) {
     });
   }
 
+  /** Admin action: add one role to the org's Role Management directory.
+   *  Not optimistic (unlike updateRolePermissions above) because the
+   *  backend assigns the id the delete button needs, and duplicate-name
+   *  rejection needs a real answer before the UI can call it "created". */
+  async function createRoleCatalogEntry(name, tag, access) {
+    try {
+      const entry = await apiFetch("/role-catalog/", {
+        method: "POST",
+        body: JSON.stringify({ name, tag, access }),
+      });
+      setRoleCatalog((prev) => [...(prev || []), entry]);
+      return { success: true, entry };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  /** Admin action: remove one role from the directory. Optimistic, rolls
+   *  back on failure (e.g. someone else already deleted it, or it's
+   *  locked) the same way updateRolePermissions does. */
+  async function deleteRoleCatalogEntry(id) {
+    const prevCatalog = roleCatalog;
+    setRoleCatalog((prev) => (prev || []).filter((r) => r.id !== id));
+    try {
+      await apiFetch(`/role-catalog/${id}/`, { method: "DELETE" });
+      return { success: true };
+    } catch (err) {
+      setRoleCatalog(prevCatalog); // roll back
+      return { success: false, error: err.message };
+    }
+  }
+
   /** Admin action: change a single view/create/edit/delete flag for one
    *  module, for one role. This is the write side of the real module
    *  permission engine — called from UserPage's "Module Access Control"
@@ -1770,6 +1822,9 @@ export function AuthProvider({ children }) {
         updateSalesSettings,
         rolePermissions,
         updateRolePermissions,
+        roleCatalog,
+        createRoleCatalogEntry,
+        deleteRoleCatalogEntry,
         getAllowedPages,
         getAllowedPagesForCurrentUser,
         canAccessPage,

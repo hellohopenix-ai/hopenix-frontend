@@ -22,6 +22,12 @@ import {
   Sun,
 } from "lucide-react";
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
+// Real Projects list (projects.Project) — the dropdown used to offer 5
+// hardcoded demo project names ("E-Commerce Website" etc.) regardless of
+// what projects actually existed, so picking one for an income entry
+// didn't correspond to anything real. Now sourced from the same backend
+// ProjectsPage.jsx itself uses.
+import { listProjects } from "../projectsApi.js";
 
 /* ------------------------------------------------------------------ */
 /*  Real backend wiring — Django REST + Postgres (dashboard.Income)   */
@@ -78,7 +84,6 @@ function mapApiEntry(row) {
   };
 }
 
-const PROJECTS_BASE = ["E-Commerce Website", "Mobile App Development", "Brand Identity Design", "CRM System", "Inventory Management System"];
 const METHOD_OPTIONS = ["Bank Transfer", "JazzCash", "Easypaisa", "Cash in Hand"];
 const STATUS_OPTIONS = ["Received", "Pending", "Overdue"];
 const TABS = ["All Incomes", "Received", "Pending", "Overdue"];
@@ -318,9 +323,33 @@ export default function IncomePage({ darkMode = false }) {
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [viewAllModal, setViewAllModal] = useState(null); // "project" | "recent" | null
   const [toast, setToast] = useState(null);
+  // Real project names (projects.Project), for the "Project" dropdown in
+  // the add/edit form and the filter bar — null while loading/on error,
+  // in which case the dropdown just falls back to names already used by
+  // existing income entries (no more hardcoded demo project names).
+  const [realProjectNames, setRealProjectNames] = useState(null);
 
   const tableRef = useRef(null);
   const toastTimer = useRef(null);
+
+  /* ---------------- load real projects, for the dropdown -------------- */
+  useEffect(() => {
+    let cancelled = false;
+    listProjects()
+      .then((rows) => {
+        if (cancelled) return;
+        const names = (Array.isArray(rows) ? rows : rows?.results || [])
+          .map((p) => p.name)
+          .filter(Boolean);
+        setRealProjectNames(names);
+      })
+      .catch((err) => {
+        console.error("Projects fetch failed, project dropdown will only show names already in use:", err);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   /* ---------------- load once from Postgres via the Django API -------- */
   useEffect(() => {
@@ -432,8 +461,8 @@ export default function IncomePage({ darkMode = false }) {
 
   const projectOptions = useMemo(() => {
     const fromEntries = entries ? entries.map((e) => e.project) : [];
-    return Array.from(new Set([...PROJECTS_BASE, ...fromEntries])).filter(Boolean);
-  }, [entries]);
+    return Array.from(new Set([...(realProjectNames || []), ...fromEntries])).filter(Boolean);
+  }, [entries, realProjectNames]);
 
   const projectBreakdown = useMemo(() => {
     if (!entries) return [];

@@ -1,7 +1,18 @@
 import React, { useState, useRef, useEffect, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth, getRoleCategory } from "../AuthContext.jsx";
-import { API_ROOT } from "../apiConfig.js";
+import { API_ROOT, API_BASE_URL } from "../apiConfig.js";
+import { fetchExpenses, createExpense } from "../expensesApi.js";
+// Real messaging backend (same one MessagesPage.jsx uses) — the AI
+// Assistant's "send to <name>" / "send to all" commands used to only
+// write into a local, disconnected conversations mirror that
+// MessagesPage ignores once real backend data exists (see apiConversations
+// there). Sending through this instead means it actually arrives.
+import { sendMessage as apiSendMessage } from "../messagesApi.js";
+// Real leave-request backend (same one used elsewhere for the admin's
+// Leave Requests panel) — the AI Assistant's leave automation used to
+// only ever write to local-only state.
+import { submitLeaveRequest, decideLeaveRequest } from "../api/employeesApi.js";
 import { MessagingSocketProvider } from "../MessagingSocketContext.jsx";
 import BirthdayCelebration from "../BirthdayCelebration.jsx";
 import {
@@ -447,9 +458,12 @@ const USER_GROWTH_BY_PERIOD = {
   "Month": { total: "205,890", delta: "+ 22%", progress: 68, note: "Checking totally", highlightNote: "+210 today" },
 };
 
-/* Statistics card: two metrics ("Customer Satisfaction" / "Visitor height"),
+/* Statistics card: two metrics ("Customer Satisfaction" / "Visitor Traffic"),
    each with a Weekly / Monthly / Yearly breakdown. Switching the metric
-   toggle or the period dropdown swaps in the matching dataset. */
+   toggle or the period dropdown swaps in the matching dataset. Both now
+   have a real backend endpoint (see liveSatisfaction / liveVisitorTraffic
+   below) — these datasets are only the fallback shown while loading or
+   if a fetch fails. */
 const STATS_DATASETS = {
   "Customer Satisfaction": {
     Weekly: {
@@ -486,38 +500,38 @@ const STATS_DATASETS = {
       ],
     },
   },
-  "Visitor height": {
+  "Visitor Traffic": {
     Weekly: {
-      headline: "+41%",
-      note: "Visitor height increases every week",
+      headline: "0",
+      note: "Loading visitor traffic…",
       bars: [
-        { day: "Mon", value: 25, delta: "+3%" },
-        { day: "Tue", value: 38, delta: "+9%" },
-        { day: "Wed", value: 50, delta: "+15%" },
-        { day: "Thu", value: 64, delta: "+22%" },
-        { day: "Fri", value: 72, delta: "+29%" },
-        { day: "Sat", value: 46, delta: "+33%" },
-        { day: "Sun", value: 58, delta: "+41%" },
+        { day: "Mon", value: 0, delta: "0" },
+        { day: "Tue", value: 0, delta: "0" },
+        { day: "Wed", value: 0, delta: "0" },
+        { day: "Thu", value: 0, delta: "0" },
+        { day: "Fri", value: 0, delta: "0" },
+        { day: "Sat", value: 0, delta: "0" },
+        { day: "Sun", value: 0, delta: "0" },
       ],
     },
     Monthly: {
-      headline: "+35%",
-      note: "Visitor height increases every month",
+      headline: "0",
+      note: "Loading visitor traffic…",
       bars: [
-        { day: "Week 1", value: 32, delta: "+8%" },
-        { day: "Week 2", value: 48, delta: "+16%" },
-        { day: "Week 3", value: 60, delta: "+26%" },
-        { day: "Week 4", value: 74, delta: "+35%" },
+        { day: "Week 1", value: 0, delta: "0" },
+        { day: "Week 2", value: 0, delta: "0" },
+        { day: "Week 3", value: 0, delta: "0" },
+        { day: "Week 4", value: 0, delta: "0" },
       ],
     },
     Yearly: {
-      headline: "+29%",
-      note: "Visitor height increases year over year",
+      headline: "0",
+      note: "Loading visitor traffic…",
       bars: [
-        { day: "Q1", value: 38, delta: "+6%" },
-        { day: "Q2", value: 46, delta: "+14%" },
-        { day: "Q3", value: 55, delta: "+21%" },
-        { day: "Q4", value: 63, delta: "+29%" },
+        { day: "Q1", value: 0, delta: "0" },
+        { day: "Q2", value: 0, delta: "0" },
+        { day: "Q3", value: 0, delta: "0" },
+        { day: "Q4", value: 0, delta: "0" },
       ],
     },
   },
@@ -836,6 +850,31 @@ function cleanNote(raw, fallback) {
   return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
 }
 
+/* Turns parseLeaveCommand's loose `when` keyword ("today"/"aaj",
+   "tomorrow"/"kal", or a weekday name) into a real ISO date the backend
+   LeaveRequest API needs. A weekday name resolves to its next occurrence
+   (today counts as "next" if today IS that weekday, matching how someone
+   asking for "leave on Monday" on a Monday almost always means today). */
+function resolveLeaveWhenToDate(when) {
+  const now = new Date();
+  const w = (when || "").toLowerCase();
+  if (w === "aaj" || w === "today") return now.toISOString().slice(0, 10);
+  if (w === "kal" || w === "tomorrow") {
+    const d = new Date(now);
+    d.setDate(d.getDate() + 1);
+    return d.toISOString().slice(0, 10);
+  }
+  const weekdays = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+  const targetDow = weekdays.indexOf(w);
+  if (targetDow !== -1) {
+    const d = new Date(now);
+    const diff = (targetDow - d.getDay() + 7) % 7;
+    d.setDate(d.getDate() + diff);
+    return d.toISOString().slice(0, 10);
+  }
+  return now.toISOString().slice(0, 10); // fallback: today
+}
+
 /* Returns one of:
  *   { type: "broadcast", message }
  *   { type: "broadcast_empty" }  // broadcast phrase used but no message text followed
@@ -964,25 +1003,34 @@ function lerpColor(a, b, t) {
   return `rgb(${rh[0]},${rh[1]},${rh[2]})`;
 }
 
-/* Keyword-based fallback replies. Now takes a `context` object so a few of
-   these (profit, sales) can answer with the real numbers for whatever date
-   range is currently selected on the Dashboard, instead of always quoting
-   the same fixed month. */
+/* Keyword-based fallback replies. Takes a `context` object carrying the
+   REAL data Dashboard already fetches (liveStats/liveSales — same
+   arrays the Statistics/Sales widgets and the PDF export use) so
+   "profit"/"sales" answers quote actual numbers, not canned mock ones.
+   Falls back to the mock STATS_BY_RANGE/SALES_DATA only while that live
+   data hasn't loaded yet or a fetch failed — same "placeholder, not
+   silently-fake" rule the rest of the dashboard follows. */
 function respond(command, context = {}) {
   const c = command.toLowerCase();
   const range = context.selectedDateRange || "This Month";
-  const stats = STATS_BY_RANGE[range] || STATS_BY_RANGE["This Month"];
+  const isLive = !!context.liveStats;
+  const stats = context.liveStats || STATS_BY_RANGE[range] || STATS_BY_RANGE["This Month"];
   const [salesStat, purchaseStat, profitStat, customersStat] = stats;
+  const placeholderNote = isLive ? "" : " (couldn't reach the server — this is placeholder data)";
 
-  if (c.includes("expense")) return "Got it — I've logged that expense to your Expenses ledger.";
-  if (c.includes("income")) return "Done. That income has been added to the project total.";
-  if (c.includes("profit")) return `For ${range}, your total profit is ${profitStat.value} (${profitStat.delta} vs the previous period).`;
+  // Mentioning "expense"/"income" without an amount never reached
+  // add_expense/add_income above, so nothing was actually logged —
+  // say so honestly instead of claiming it was done.
+  if (c.includes("expense")) return 'To log an expense, tell me the amount — e.g. "add expense of 500 for petrol".';
+  if (c.includes("income")) return 'To log income, tell me the amount — e.g. "add income of 500 from client x".';
+  if (c.includes("profit")) return `For ${range}, your total profit is ${profitStat.value} (${profitStat.delta} vs the previous period).${placeholderNote}`;
   if (c.includes("project") || c.includes("website")) return "Started a new project workspace for that client. Check Projects to add details.";
   if (c.includes("sales")) {
-    const first = SALES_DATA[0];
-    const last = SALES_DATA[SALES_DATA.length - 1];
+    const salesRows = context.liveSales || SALES_DATA;
+    const first = salesRows[0];
+    const last = salesRows[salesRows.length - 1];
     return (
-      `Here's the sales report for ${range}:\n` +
+      `Here's the sales report for ${range}:${placeholderNote}\n` +
       `• Total Sales: ${salesStat.value} (${salesStat.delta} vs the previous period)\n` +
       `• Daily trend: $${first.sales.toLocaleString()} on ${first.day} → $${last.sales.toLocaleString()} on ${last.day}\n` +
       `• Total Purchases: ${purchaseStat.value} · New Customers: ${customersStat.value}`
@@ -1268,6 +1316,72 @@ export default function Dashboard() {
       // ignore storage errors (e.g. private browsing)
     }
   }, [darkMode]);
+  /* Real Expenses (expenses.Expense, same records ExpensesPage.jsx shows)
+     and real Income (dashboard.Income, same records IncomePage.jsx shows).
+     Used for the PDF/CSV export AND now also as the AI Assistant's actual
+     ledger — see pushExpense/pushIncome and the expense_summary/
+     income_summary command handlers further down, which read these
+     instead of the old local `expenses`/`income` seed state. null = not
+     loaded yet / fetch failed. */
+  const [liveExportExpenses, setLiveExportExpenses] = useState(null);
+  const [liveExportIncome, setLiveExportIncome] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchExpenses()
+      .then((data) => {
+        if (!cancelled) setLiveExportExpenses(Array.isArray(data) ? data : []);
+      })
+      .catch((err) => {
+        console.error("Expenses fetch failed (export will fall back to placeholder data):", err);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const token = localStorage.getItem("hopenix_auth_token");
+    const headers = { "Content-Type": "application/json" };
+    if (token) headers["Authorization"] = `Token ${token}`;
+    fetch(`${API_BASE_URL}/dashboard/incomes/`, { headers })
+      .then((res) => {
+        if (!res.ok) throw new Error(`Income API error ${res.status}`);
+        return res.json();
+      })
+      .then((data) => {
+        if (!cancelled) setLiveExportIncome(Array.isArray(data) ? data : data.results || []);
+      })
+      .catch((err) => {
+        console.error("Income fetch failed (export will fall back to placeholder data):", err);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  /* POST /dashboard/incomes/ — there's no dedicated incomeApi.js (unlike
+     expensesApi.js), so this mirrors the GET fetch just above. Used by
+     the AI Assistant's "add income of ..." command. */
+  async function createIncome(payload) {
+    const token = localStorage.getItem("hopenix_auth_token");
+    const headers = { "Content-Type": "application/json" };
+    if (token) headers["Authorization"] = `Token ${token}`;
+    const res = await fetch(`${API_BASE_URL}/dashboard/incomes/`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      const message = body.error || body.detail || Object.values(body)[0] || `Request failed (${res.status})`;
+      throw new Error(Array.isArray(message) ? message[0] : String(message));
+    }
+    return res.json();
+  }
+
+
   const [notifOpen, setNotifOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchFocused, setSearchFocused] = useState(false);
@@ -1413,15 +1527,17 @@ export default function Dashboard() {
   const [statsPeriod, setStatsPeriod] = useState("Weekly");
   const [statsPeriodOpen, setStatsPeriodOpen] = useState(false);
 
-  /* Real "Customer Satisfaction" data (order approval rate) from the
-     backend — refetched whenever the Weekly/Monthly/Yearly toggle
-     changes. "Visitor height" has no real data source yet, so it keeps
-     using the mock STATS_DATASETS below. */
+  /* Real "Customer Satisfaction" data (order approval rate) and real
+     "Visitor Traffic" data (front-desk check-ins, visitors.Visitor) from
+     the backend — both refetched whenever the Weekly/Monthly/Yearly
+     toggle changes. If a fetch fails, the JSX below shows a visible
+     "showing placeholder data" note (see isShowingStatsPlaceholder)
+     instead of silently passing off the zeroed STATS_DATASETS fallback
+     as real numbers. */
   const [liveSatisfaction, setLiveSatisfaction] = useState(null);
-  // Only the "Customer Satisfaction" metric has a real endpoint, so this
-  // only gates that one — "Visitor height" was already always-mock and
-  // stays that way, no flash to fix there.
   const [satisfactionLoading, setSatisfactionLoading] = useState(true);
+  const [liveVisitorTraffic, setLiveVisitorTraffic] = useState(null);
+  const [visitorTrafficLoading, setVisitorTrafficLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
@@ -1430,10 +1546,27 @@ export default function Dashboard() {
         if (!cancelled) setLiveSatisfaction(data);
       })
       .catch((err) => {
-        console.error("Customer satisfaction fetch failed, showing demo data instead:", err);
+        console.error("Customer satisfaction fetch failed, showing placeholder data instead:", err);
       })
       .finally(() => {
         if (!cancelled) setSatisfactionLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [statsPeriod]);
+
+  useEffect(() => {
+    let cancelled = false;
+    dashboardFetch(`/visitor-traffic/?period=${statsPeriod.toLowerCase()}`)
+      .then((data) => {
+        if (!cancelled) setLiveVisitorTraffic(data);
+      })
+      .catch((err) => {
+        console.error("Visitor traffic fetch failed, showing placeholder data instead:", err);
+      })
+      .finally(() => {
+        if (!cancelled) setVisitorTrafficLoading(false);
       });
     return () => {
       cancelled = true;
@@ -1532,45 +1665,11 @@ export default function Dashboard() {
     return () => window.removeEventListener("storage", handleConversationsStorage);
   }, []);
 
-  // NEW — leave requests granted through the AI Assistant's automation
-  // ("AI, meri leave de do" / "give me leave tomorrow"). Stored the same
-  // shared, cross-tab-synced way as `conversations` above so any other
-  // part of the app (a future Leave/HR page, Employees, etc.) can read
-  // the exact same record of who took leave and when, not just whatever
-  // happened to be in this one browser tab's memory.
-  const LEAVE_REQUESTS_STORAGE_KEY = "hopenix_leave_requests_v1";
-  const [leaveRequests, setLeaveRequests] = useState(() => {
-    try {
-      const saved = localStorage.getItem(LEAVE_REQUESTS_STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
-      }
-    } catch (err) {
-      console.error("Could not restore saved leave requests:", err);
-    }
-    return [];
-  });
-  useEffect(() => {
-    try {
-      localStorage.setItem(LEAVE_REQUESTS_STORAGE_KEY, JSON.stringify(leaveRequests));
-    } catch (err) {
-      console.error("Could not save leave requests:", err);
-    }
-  }, [leaveRequests]);
-  useEffect(() => {
-    function handleLeaveRequestsStorage(e) {
-      if (e.key !== LEAVE_REQUESTS_STORAGE_KEY || !e.newValue) return;
-      try {
-        const parsed = JSON.parse(e.newValue);
-        if (Array.isArray(parsed)) setLeaveRequests(parsed);
-      } catch (err) {
-        console.error("Could not sync leave requests from another tab:", err);
-      }
-    }
-    window.addEventListener("storage", handleLeaveRequestsStorage);
-    return () => window.removeEventListener("storage", handleLeaveRequestsStorage);
-  }, []);
+  // Leave requests granted/filed through the AI Assistant's automation
+  // now go straight to the real backend (see pushLeaveRequest above,
+  // using api/employeesApi.js's submitLeaveRequest/decideLeaveRequest) —
+  // the same store the admin's Leave Requests panel and EmployeesPage.jsx
+  // already read from. No local mirror needed here anymore.
 
   // What MessagesPage is actually allowed to show this viewer: everything
   // for admin/manager, or just their own thread (matched by authId) for
@@ -1830,10 +1929,11 @@ export default function Dashboard() {
       markBirthdayMessageDelivered(msg.userId, msg.dateKey);
     });
   }, [user, approvedUsers, conversations, setConversations]);
-  // Expenses / Income seed data feeds the AI Assistant's own commands and
-  // the PDF export — see the note above SEED_EXPENSES/SEED_INCOME.
-  const [expenses, setExpenses] = useState(SEED_EXPENSES);
-  const [income, setIncome] = useState(SEED_INCOME);
+  // The AI Assistant's own expense/income commands now go straight to
+  // the real backend (see pushExpense/pushIncome above) and read back
+  // from liveExportExpenses/liveExportIncome — SEED_EXPENSES/SEED_INCOME
+  // below are kept only as the PDF export's placeholder fallback (see
+  // exportReport) for if that live fetch hasn't loaded/failed.
   // When the AI Assistant asks a follow-up question ("what would you like
   // to send to everyone?"), this remembers what it's waiting for so the
   // user's very next message is used as the answer instead of being
@@ -1844,14 +1944,27 @@ export default function Dashboard() {
   const transcriptRef = useRef("");
 
   const currentGrowth = liveGrowth || USER_GROWTH_BY_PERIOD[growthPeriod];
-  const currentStats =
-    statsMetric === "Customer Satisfaction" && liveSatisfaction
-      ? liveSatisfaction
-      : STATS_DATASETS[statsMetric][statsPeriod];
-  const maxStatValue = Math.max(...currentStats.bars.map((b) => b.value));
-  // Only "Customer Satisfaction" has a real endpoint — "Visitor height"
-  // was always mock data and has nothing to wait for.
-  const isStatsWidgetLoading = statsMetric === "Customer Satisfaction" && satisfactionLoading;
+  const liveStatsForMetric =
+    statsMetric === "Customer Satisfaction" ? liveSatisfaction : liveVisitorTraffic;
+  const currentStats = liveStatsForMetric || STATS_DATASETS[statsMetric][statsPeriod];
+  const maxStatValue = Math.max(...currentStats.bars.map((b) => b.value), 1);
+  const isStatsWidgetLoading =
+    statsMetric === "Customer Satisfaction" ? satisfactionLoading : visitorTrafficLoading;
+  // True once a fetch has actually failed for the metric currently on
+  // screen — not just because it hasn't finished loading yet — so the
+  // JSX can show a small "showing placeholder data" note instead of
+  // quietly passing the zeroed fallback off as real numbers.
+  const isShowingStatsPlaceholder = !isStatsWidgetLoading && !liveStatsForMetric;
+  // Which top-level widgets are currently showing placeholder/mock data
+  // because their live fetch failed (not just "still loading") — drives
+  // the amber banner above the stat cards.
+  const dashboardFallbackWidgets = [
+    !statsLoading && !liveStats && "Stat cards",
+    !salesLoading && !liveSales && "Sales Overview",
+    !countryOrdersLoading && !liveCountryOrders && "Most Order by Country",
+    !growthLoading && !liveGrowth && "User Growth",
+    isShowingStatsPlaceholder && statsMetric,
+  ].filter(Boolean);
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -1952,96 +2065,116 @@ export default function Dashboard() {
     setListening(true);
   }
 
-  /* Appends an outgoing message to a single conversation by id. Used by
-     the AI Assistant's "send to <name>" command. */
-  function pushMessageToConversation(id, text) {
-    const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    setConversations((prev) =>
-      prev.map((c) =>
-        c.id === id
-          ? {
-              ...c,
-              time: "Just now",
-              // Sent as admin (via the AI Assistant), so the employee on the
-              // other end of this thread hasn't seen it yet — bump their
-              // counter so their sidebar picks up the Messages red dot.
-              unreadForUser: (c.unreadForUser || 0) + 1,
-              messages: [
-                ...c.messages,
-                { id: (c.messages[c.messages.length - 1]?.id || 0) + 1, text, time, outgoing: true, sender: "admin" },
-              ],
-            }
-          : c
-      )
-    );
+  /* Real users (approvedUsers, from AuthContext) for the AI Assistant's
+     name-matching — "<name> ko bhej do", "<name> ko leave de do" etc.
+     Replaces the old local `conversations` array (which findConversationByName
+     used to search) so a name only matches a real account, and the
+     targetId it resolves to is a real user id the backend accepts. */
+  const aiDirectory = useMemo(
+    () => (approvedUsers || []).map((u) => ({ id: u.id, name: u.name })),
+    [approvedUsers]
+  );
+
+  /* Sends one real message via the same backend MessagesPage.jsx uses.
+     Used by the AI Assistant's "send to <name>" command. Returns
+     {success} / {success:false, error} instead of updating any local
+     state — MessagesPage's own real-time fetch/websocket picks the
+     message up from the backend the normal way. */
+  async function pushMessageToConversation(id, text) {
+    try {
+      await apiSendMessage({ recipientId: id, text });
+      return { success: true };
+    } catch (err) {
+      console.error("AI Assistant: failed to send message:", err);
+      return { success: false, error: err.message };
+    }
   }
 
-  /* Appends the same outgoing message to every conversation. Used by the
-     AI Assistant's "send to all members" / broadcast command. */
-  function pushMessageToAll(text) {
-    const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    setConversations((prev) =>
-      prev.map((c) => {
-        // Peer conversations (direct chats between two non-admin users)
-        // are outside admin's own inbox — same reasoning as
-        // visibleConversations excluding them from admin's list — so a
-        // "message all members" broadcast from admin shouldn't inject a
-        // message into someone else's private 1:1 thread.
-        if (c.peerAuthIds) return c;
-        return {
-          ...c,
-          time: "Just now",
-          unreadForUser: (c.unreadForUser || 0) + 1,
-          messages: [
-            ...c.messages,
-            { id: (c.messages[c.messages.length - 1]?.id || 0) + 1, text, time, outgoing: true, sender: "admin" },
-          ],
-        };
-      })
-    );
+  /* Sends the same message to every real user (except the sender) one at
+     a time. Used by the AI Assistant's "send to all members" / broadcast
+     command. Partial failures are reported rather than silently treated
+     as full success. */
+  async function pushMessageToAll(text) {
+    const targets = aiDirectory.filter((u) => u.id && u.id !== user?.id);
+    if (targets.length === 0) return { success: false, error: "No other members to message.", count: 0 };
+    const results = await Promise.allSettled(targets.map((u) => apiSendMessage({ recipientId: u.id, text })));
+    const failedCount = results.filter((r) => r.status === "rejected").length;
+    if (failedCount === targets.length) {
+      return { success: false, error: results[0]?.reason?.message || "Could not reach the server.", count: 0 };
+    }
+    return { success: true, count: targets.length - failedCount, total: targets.length, partial: failedCount > 0 };
   }
 
-  /* Appends a real row to the Expenses seed list (used by the AI
-     Assistant's "add expense of ..." command and reflected in the PDF
-     export). */
-  function pushExpense(amount, note) {
-    const now = new Date();
-    setExpenses((prev) => [
-      {
-        id: (prev[prev.length - 1]?.id || 0) + 1,
-        note,
+  /* Creates a real row via POST /api/expenses/expenses/ (same backend
+     ExpensesPage.jsx uses). Used by the AI Assistant's "add expense of
+     ..." command; also mirrored into liveExportExpenses so a follow-up
+     "kitna kharcha hua" question in the same session sees it immediately
+     without waiting for a refetch. */
+  async function pushExpense(amount, note) {
+    try {
+      const created = await createExpense({
+        title: note,
         category: "AI Assistant",
         amount,
-        date: now.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" }),
-        addedVia: "AI Assistant",
-      },
-      ...prev,
-    ]);
+        date: new Date().toISOString().slice(0, 10),
+      });
+      setLiveExportExpenses((prev) => [created, ...(prev || [])]);
+      return { success: true };
+    } catch (err) {
+      console.error("AI Assistant: failed to log expense:", err);
+      return { success: false, error: err.message };
+    }
   }
 
-  /* Same idea for Income. */
-  function pushIncome(amount, note) {
-    const now = new Date();
-    setIncome((prev) => [
-      {
-        id: (prev[prev.length - 1]?.id || 0) + 1,
-        note,
-        category: "AI Assistant",
+  /* Same idea for Income — POST /api/dashboard/incomes/ (same backend
+     IncomePage.jsx uses). */
+  async function pushIncome(amount, note) {
+    try {
+      const created = await createIncome({
+        desc: note,
         amount,
-        date: now.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" }),
-        addedVia: "AI Assistant",
-      },
-      ...prev,
-    ]);
+        date: new Date().toISOString().slice(0, 10),
+        method: /\b(hand\s*payment|cash|nakad)\b/i.test(note) ? "Cash in Hand" : "Bank Transfer",
+        status: "Received",
+      });
+      setLiveExportIncome((prev) => [created, ...(prev || [])]);
+      return { success: true };
+    } catch (err) {
+      console.error("AI Assistant: failed to log income:", err);
+      return { success: false, error: err.message };
+    }
   }
 
-  /* NEW — records one leave grant from the AI Assistant's automation.
-     Always auto-approved: the ask was for the AI to actually grant the
-     leave when asked ("wo leave de deta hai"), not just log a pending
-     request someone else has to act on later. */
-  function pushLeaveRequest(entry) {
-    setLeaveRequests((prev) => [entry, ...prev]);
+  /* Files a real leave request via POST /api/employees/leave-requests/
+     (same backend the admin's Leave Requests panel reads). Per the
+     backend's own rules, only an admin can immediately approve a
+     request (LeaveRequestDecideView is admin-only) — so:
+       - admin requesting their own leave, or granting someone else's,
+         is filed AND immediately approved (admin has that right)
+       - anyone else's own request is filed as pending, same as every
+         other leave request in the app; their admin still approves it
+         from the Leave Requests panel.
+     This replaces the old version, which always claimed "approved"
+     regardless of who was asking or whether that was even true. */
+  async function pushLeaveRequest({ employeeId, isAdmin, startDate, reason }) {
+    try {
+      const created = await submitLeaveRequest(employeeId, {
+        type: "Full Day",
+        startDate,
+        endDate: startDate,
+        reason,
+      });
+      if (isAdmin) {
+        const approved = await decideLeaveRequest(created.id, "approved");
+        return { success: true, approved: true, leave: approved };
+      }
+      return { success: true, approved: false, leave: created };
+    } catch (err) {
+      console.error("AI Assistant: failed to file leave request:", err);
+      return { success: false, error: err.message };
+    }
   }
+
 
   function sendMessage(text) {
     const clean = text.trim();
@@ -2059,9 +2192,11 @@ export default function Dashboard() {
     // adminOnlyTypes below and respondForEmployee().
     const isAdmin = user?.role === "admin";
 
-    setTimeout(() => {
-      setTyping(false);
-
+    // Async because every action below now hits the real backend
+    // (messages, expenses, income, leave requests) instead of just
+    // updating local state — see pushMessageToConversation / pushMessageToAll
+    // / pushExpense / pushIncome / pushLeaveRequest above.
+    setTimeout(async () => {
       let replyText;
       const cancelWords = /^(cancel|nevermind|never\s*mind|nvm|no|skip|stop)$/i;
 
@@ -2076,81 +2211,89 @@ export default function Dashboard() {
         replyText = "No problem — cancelled.";
         setPendingAction(null);
       } else if (isAdmin && pendingAction?.type === "broadcast") {
-        pushMessageToAll(clean);
-        replyText = `Done — sent "${clean}" to all ${conversations.filter((c) => !c.peerAuthIds).length} members. Open Messages to see it.`;
+        const result = await pushMessageToAll(clean);
+        replyText = result.success
+          ? `Done — sent "${clean}" to ${result.count} of ${result.total} member${result.total === 1 ? "" : "s"}${result.partial ? " (some failed to send)" : ""}. Open Messages to see it.`
+          : `Couldn't send that to everyone — ${result.error || "please try again."}`;
         setPendingAction(null);
       } else if (isAdmin && pendingAction?.type === "individual") {
-        pushMessageToConversation(pendingAction.targetId, clean);
-        replyText = `Done — sent "${clean}" to ${pendingAction.targetName}. Open Messages to see the conversation.`;
+        const result = await pushMessageToConversation(pendingAction.targetId, clean);
+        replyText = result.success
+          ? `Done — sent "${clean}" to ${pendingAction.targetName}. Open Messages to see the conversation.`
+          : `Couldn't send that to ${pendingAction.targetName} — ${result.error || "please try again."}`;
         setPendingAction(null);
       } else {
-        const command = parseAiCommand(clean, conversations);
+        const command = parseAiCommand(clean, aiDirectory);
         // Requesting your OWN leave (or, for admin, granting someone
         // else's) is a personal action available to everyone — checked
         // before the admin-only gate below so it's never blocked.
-        const leave = parseLeaveCommand(clean, conversations, isAdmin);
+        const leave = parseLeaveCommand(clean, aiDirectory, isAdmin);
         const adminOnlyTypes = ["broadcast", "broadcast_empty", "individual", "individual_empty", "add_expense", "add_income", "sales_report", "expense_summary", "income_summary"];
 
         if (leave) {
-          const now = new Date();
+          const startDate = resolveLeaveWhenToDate(leave.when);
           if (leave.targetSelf) {
-            pushLeaveRequest({
-              id: `${user?.id || "guest"}-${now.getTime()}`,
-              userId: user?.id || null,
-              userName: user?.name || "You",
-              role: user?.role || "member",
-              when: leave.when,
-              note: leave.raw,
-              status: "Approved",
-              requestedVia: "AI Assistant",
-              createdOn: now.toISOString(),
-            });
-            replyText = `Done — your leave for ${leave.when} has been recorded and approved. ✅`;
+            if (!user?.id) {
+              replyText = "I couldn't find your account to file that leave request — try again from Settings.";
+            } else {
+              const result = await pushLeaveRequest({ employeeId: user.id, isAdmin, startDate, reason: leave.raw });
+              if (!result.success) {
+                replyText = `Couldn't file that leave request — ${result.error || "please try again."}`;
+              } else if (result.approved) {
+                replyText = `Done — your leave for ${leave.when} has been filed and approved. ✅`;
+              } else {
+                replyText = `Done — I've filed a leave request for ${leave.when}. It's pending approval from your admin.`;
+              }
+            }
           } else {
-            pushLeaveRequest({
-              id: `${leave.targetId}-${now.getTime()}`,
-              userId: leave.targetId,
-              userName: leave.targetName,
-              role: "member",
-              when: leave.when,
-              note: leave.raw,
-              status: "Approved",
-              requestedVia: "AI Assistant (granted by admin)",
-              createdOn: now.toISOString(),
-            });
-            replyText = `Done — approved leave for ${leave.targetName} (${leave.when}).`;
+            const result = await pushLeaveRequest({ employeeId: leave.targetId, isAdmin, startDate, reason: leave.raw });
+            replyText = result.success
+              ? `Done — approved leave for ${leave.targetName} (${leave.when}).`
+              : `Couldn't file that leave request for ${leave.targetName} — ${result.error || "please try again."}`;
           }
         } else if (adminOnlyTypes.includes(command.type) && !isAdmin) {
           replyText = "That's an admin-only action, so I can't do that from your account here — I can help with your own tasks, leave, or account instead.";
         } else if (command.type === "broadcast") {
-          pushMessageToAll(command.message);
-          replyText = `Done — sent "${command.message}" to all ${conversations.filter((c) => !c.peerAuthIds).length} members. Open Messages to see it.`;
+          const result = await pushMessageToAll(command.message);
+          replyText = result.success
+            ? `Done — sent "${command.message}" to ${result.count} of ${result.total} member${result.total === 1 ? "" : "s"}${result.partial ? " (some failed to send)" : ""}. Open Messages to see it.`
+            : `Couldn't send that to everyone — ${result.error || "please try again."}`;
         } else if (command.type === "broadcast_empty") {
           replyText = "Sure — what would you like me to send to everyone? Just type the message and I'll send it.";
           setPendingAction({ type: "broadcast" });
         } else if (command.type === "individual") {
-          pushMessageToConversation(command.targetId, command.message);
-          replyText = `Done — sent "${command.message}" to ${command.targetName}. Open Messages to see the conversation.`;
+          const result = await pushMessageToConversation(command.targetId, command.message);
+          replyText = result.success
+            ? `Done — sent "${command.message}" to ${command.targetName}. Open Messages to see the conversation.`
+            : `Couldn't send that to ${command.targetName} — ${result.error || "please try again."}`;
         } else if (command.type === "individual_empty") {
           replyText = `Sure — what would you like me to send to ${command.targetName}? Just type the message and I'll send it.`;
           setPendingAction({ type: "individual", targetId: command.targetId, targetName: command.targetName });
         } else if (command.type === "add_expense") {
-          pushExpense(command.amount, command.note);
-          replyText = `Done — logged a $${command.amount.toLocaleString()} expense for "${command.note}" to your Expenses ledger. Open Expenses to see it.`;
+          const result = await pushExpense(command.amount, command.note);
+          replyText = result.success
+            ? `Done — logged a $${command.amount.toLocaleString()} expense for "${command.note}" to your Expenses ledger. Open Expenses to see it.`
+            : `Couldn't log that expense — ${result.error || "please try again."}`;
         } else if (command.type === "add_income") {
-          pushIncome(command.amount, command.note);
-          replyText = `Done — logged $${command.amount.toLocaleString()} of income for "${command.note}" to your Income ledger. Open Income to see it.`;
+          const result = await pushIncome(command.amount, command.note);
+          replyText = result.success
+            ? `Done — logged $${command.amount.toLocaleString()} of income for "${command.note}" to your Income ledger. Open Income to see it.`
+            : `Couldn't log that income — ${result.error || "please try again."}`;
         } else if (command.type === "sales_report") {
-          replyText = respond("sales report", { selectedDateRange });
+          replyText = respond("sales report", { selectedDateRange, liveStats, liveSales });
         } else if (command.type === "expense_summary") {
-          replyText = summarizeLedger(expenses, "expense");
+          replyText = summarizeLedger(liveExportExpenses, "expense");
         } else if (command.type === "income_summary") {
-          replyText = summarizeLedger(income, "income");
+          replyText = summarizeLedger(
+            (liveExportIncome || []).map((e) => ({ ...e, category: e.method })),
+            "income"
+          );
         } else {
-          replyText = isAdmin ? respond(clean, { selectedDateRange }) : respondForEmployee(clean);
+          replyText = isAdmin ? respond(clean, { selectedDateRange, liveStats, liveSales }) : respondForEmployee(clean);
         }
       }
 
+      setTyping(false);
       setMessages((m) => [
         ...m,
         { from: "ai", text: replyText, time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) },
@@ -2166,6 +2309,7 @@ export default function Dashboard() {
     const marginX = 40;
     const violet = [124, 58, 237]; // matches the app's violet-600 accent
     const slate = [71, 85, 105];
+    const amber = [180, 120, 10];
 
     // ---------- Header ----------
     doc.setFillColor(...violet);
@@ -2180,14 +2324,31 @@ export default function Dashboard() {
     doc.setTextColor(0, 0, 0);
 
     let cursorY = 95;
+    // Section titles that had to fall back to placeholder data because
+    // the live fetch hadn't loaded yet or failed — surfaced to the user
+    // after export instead of quietly exporting fake numbers unlabeled.
+    const placeholderSections = [];
 
-    const sectionTitle = (title) => {
+    // isLive=false marks the section as using placeholder data: it's
+    // both noted in the PDF itself (small amber line under the title)
+    // and collected into placeholderSections for the post-export alert.
+    const sectionTitle = (title, isLive = true) => {
       doc.setFont("helvetica", "bold");
       doc.setFontSize(13);
       doc.setTextColor(...violet);
       doc.text(title, marginX, cursorY);
       doc.setTextColor(0, 0, 0);
       cursorY += 8;
+      if (!isLive) {
+        placeholderSections.push(title);
+        cursorY += 12;
+        doc.setFont("helvetica", "italic");
+        doc.setFontSize(8);
+        doc.setTextColor(...amber);
+        doc.text("Live data unavailable — showing placeholder figures", marginX, cursorY);
+        doc.setTextColor(0, 0, 0);
+        cursorY -= 4;
+      }
     };
 
     const runTable = (head, body) => {
@@ -2208,46 +2369,67 @@ export default function Dashboard() {
     };
 
     // ---------- Summary ----------
-    sectionTitle("Summary");
-    const summaryStats = STATS_BY_RANGE[selectedDateRange] || STATS_BY_RANGE["This Month"];
+    const liveSummary = liveStats; // same [{value,delta}, ...] shape as STAT_CARDS order
+    sectionTitle("Summary", !!liveSummary);
+    const summaryStats = liveSummary || STATS_BY_RANGE[selectedDateRange] || STATS_BY_RANGE["This Month"];
     runTable(
       ["Metric", "Value", "Change vs last month"],
       STAT_CARDS.map((s, i) => [s.label, String(summaryStats[i].value), String(summaryStats[i].delta)])
     );
 
     // ---------- Sales Overview ----------
-    sectionTitle("Sales Overview");
+    sectionTitle("Sales Overview", !!liveSales);
+    const salesRows = liveSales || SALES_DATA;
     runTable(
       ["Day", "Sales", "Base"],
-      SALES_DATA.map((s) => [s.day, String(s.sales), String(s.base)])
+      salesRows.map((s) => [s.day, String(s.sales), String(s.base)])
     );
 
     // ---------- Weekly Statistics ----------
-    sectionTitle(`Statistics — ${statsMetric} (${statsPeriod})`);
+    sectionTitle(`Statistics — ${statsMetric} (${statsPeriod})`, !!liveStatsForMetric);
     runTable(
       ["Day", "Value (%)", "Change"],
       currentStats.bars.map((s) => [s.day, String(s.value), String(s.delta)])
     );
 
     // ---------- Most Orders by Country ----------
-    sectionTitle("Most Orders by Country");
+    sectionTitle("Most Orders by Country", !!liveCountryOrders);
+    const countryRows = liveCountryOrders || COUNTRY_ORDERS;
     runTable(
       ["Name", "City", "Amount", "Rank"],
-      COUNTRY_ORDERS.map((o) => [o.name, o.city, String(o.amount), String(o.rank)])
+      countryRows.map((o) => [o.name, o.city, String(o.amount), String(o.rank)])
     );
 
     // ---------- Expenses ----------
-    sectionTitle("Expenses");
+    // Real expenses.Expense records (same ones ExpensesPage.jsx shows),
+    // not the AI Assistant's local-only `expenses` seed state.
+    sectionTitle("Expenses", !!liveExportExpenses);
+    const expenseRows = liveExportExpenses || SEED_EXPENSES;
     runTable(
-      ["Note", "Category", "Amount", "Date", "Added Via"],
-      expenses.map((e) => [e.note, e.category, String(e.amount), e.date, e.addedVia])
+      ["Title", "Category", "Amount", "Date", "Status"],
+      expenseRows.map((e) => [
+        e.title ?? e.note,
+        e.category,
+        String(e.amount),
+        e.date,
+        e.status ?? e.addedVia,
+      ])
     );
 
     // ---------- Income ----------
-    sectionTitle("Income");
+    // Real dashboard.Income records (same ones IncomePage.jsx shows),
+    // not the AI Assistant's local-only `income` seed state.
+    sectionTitle("Income", !!liveExportIncome);
+    const incomeRows = liveExportIncome || SEED_INCOME;
     runTable(
-      ["Note", "Category", "Amount", "Date", "Added Via"],
-      income.map((e) => [e.note, e.category, String(e.amount), e.date, e.addedVia])
+      ["Description", "Client/Project", "Amount", "Date", "Status"],
+      incomeRows.map((e) => [
+        e.desc ?? e.note,
+        e.client || e.project || "",
+        String(e.amount),
+        e.date,
+        e.status ?? e.addedVia,
+      ])
     );
 
     // ---------- Footer page numbers ----------
@@ -2266,6 +2448,16 @@ export default function Dashboard() {
 
     const safeRange = selectedDateRange.replace(/[^a-z0-9]+/gi, "-").toLowerCase();
     doc.save(`hopenix-report-${safeRange}.pdf`);
+
+    if (placeholderSections.length > 0) {
+      // A visible heads-up rather than a silent swap — the user asked
+      // for a live report and part of it couldn't be loaded, so they
+      // should know which part before treating it as real.
+      window.alert(
+        `Exported, but couldn't load live data for: ${placeholderSections.join(", ")}. ` +
+          "Those sections show placeholder figures, not real numbers."
+      );
+    }
 
     setTimeout(() => setExporting(false), 600);
   }
@@ -2800,6 +2992,21 @@ export default function Dashboard() {
                   </button>
                 </div>
 
+                {/* Heads-up when a widget below couldn't load live data and
+                    is showing placeholder numbers instead — was previously
+                    silent (only a console.error), so backend downtime or a
+                    bad token looked identical to genuinely low numbers. */}
+                {dashboardFallbackWidgets.length > 0 && (
+                  <div
+                    className={`flex items-center gap-2 rounded-lg px-3 py-2 text-xs ${
+                      darkMode ? "bg-amber-500/10 text-amber-400 border border-amber-500/20" : "bg-amber-50 text-amber-700 border border-amber-200"
+                    }`}
+                  >
+                    <span className="font-semibold">Showing placeholder data:</span>
+                    <span>{dashboardFallbackWidgets.join(", ")} couldn't load from the server.</span>
+                  </div>
+                )}
+
                 {/* Stat cards */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
                   {STAT_CARDS.map(({ label, hero, icon: Icon, page }, i) => {
@@ -3074,6 +3281,11 @@ export default function Dashboard() {
                       <div className="shrink-0 text-center sm:text-left">
                         <p className={`text-3xl font-bold ${headingText}`}>{currentStats.headline}</p>
                         <p className={`text-[10px] mt-1.5 max-w-[130px] ${subtleText}`}>{currentStats.note}</p>
+                        {isShowingStatsPlaceholder && (
+                          <p className="text-[9px] mt-1 max-w-[130px] text-amber-500">
+                            Couldn't load live data — showing placeholder
+                          </p>
+                        )}
                       </div>
                       <div className="flex-1 w-full flex items-end justify-between gap-2 h-32">
                         {currentStats.bars.map(({ day, value, delta }, barIdx) => (
