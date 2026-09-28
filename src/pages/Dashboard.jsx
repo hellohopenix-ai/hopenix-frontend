@@ -99,8 +99,8 @@ import autoTable from "jspdf-autotable";
 /*  Uses the same auth token AuthContext.jsx saves on login             */
 /*  ("hopenix_auth_token", sent as "Authorization: Token <key>").       */
 /*  If the request fails (backend down, no data yet, etc.) the caller   */
-/*  just keeps showing the mock STATS_BY_RANGE / COUNTRY_ORDERS data     */
-/*  below, so the UI never breaks.                                      */
+/*  shows an error state for that widget (no mock data) and the amber   */
+/*  fallback banner lists which widgets failed to load.                 */
 /* ------------------------------------------------------------------ */
 const DASHBOARD_API_BASE = `${API_ROOT}/api/dashboard`;
 
@@ -432,22 +432,6 @@ const STATS_BY_RANGE = {
   ],
 };
 
-const SALES_DATA = [
-  { day: "May 1", sales: 4200, base: 3000 },
-  { day: "May 3", sales: 9800, base: 5200 },
-  { day: "May 6", sales: 15200, base: 9000 },
-  { day: "May 9", sales: 19000, base: 12500 },
-  { day: "May 11", sales: 16500, base: 15200 },
-  { day: "May 14", sales: 24000, base: 17600 },
-  { day: "May 16", sales: 30500, base: 20200 },
-  { day: "May 19", sales: 27000, base: 23400 },
-  { day: "May 21", sales: 33500, base: 26000 },
-  { day: "May 24", sales: 38200, base: 28800 },
-  { day: "May 26", sales: 34800, base: 31200 },
-  { day: "May 29", sales: 40500, base: 33600 },
-  { day: "May 31", sales: 37200, base: 36000 },
-];
-
 /* User Growth card: total users, % change, progress-bar fill and note text
    for each selectable period ("2h", "32h", "A Week", "Month"). Clicking a
    period button swaps in the matching dataset below. */
@@ -538,38 +522,6 @@ const STATS_DATASETS = {
 };
 
 const STATS_PERIOD_OPTIONS = ["Weekly", "Monthly", "Yearly"];
-
-/* Real avatars + real flag images (flagcdn.com) instead of colored initials
-   and a lone emoji, so the "Most Order by Country" card reads as genuine data. */
-const COUNTRY_ORDERS = [
-  {
-    name: "Jenny",
-    text: "placed a large order value in",
-    amount: "$120",
-    rank: 1,
-    city: "San Francisco",
-    countryCode: "us",
-    avatar: "https://i.pravatar.cc/64?img=47",
-  },
-  {
-    name: "Paul",
-    text: "purchase item value order in",
-    amount: "$980",
-    rank: 2,
-    city: "Los Angeles",
-    countryCode: "us",
-    avatar: "https://i.pravatar.cc/64?img=12",
-  },
-  {
-    name: "Mike",
-    text: "made repeat order value order in",
-    amount: "$820",
-    rank: 3,
-    city: "San Diego",
-    countryCode: "us",
-    avatar: "https://i.pravatar.cc/64?img=33",
-  },
-];
 
 const NOTIFICATIONS = [
   { id: 1, title: "New order received", desc: "Jenny placed an order worth $120", time: "2m ago" },
@@ -992,7 +944,7 @@ function lerpColor(a, b, t) {
    REAL data Dashboard already fetches (liveStats/liveSales — same
    arrays the Statistics/Sales widgets and the PDF export use) so
    "profit"/"sales" answers quote actual numbers, not canned mock ones.
-   Falls back to the mock STATS_BY_RANGE/SALES_DATA only while that live
+   Falls back to the STATS_BY_RANGE placeholder only while that live
    data hasn't loaded yet or a fetch failed — same "placeholder, not
    silently-fake" rule the rest of the dashboard follows. */
 function respond(command, context = {}) {
@@ -1009,15 +961,18 @@ function respond(command, context = {}) {
   if (c.includes("expense")) return 'To log an expense, tell me the amount — e.g. "add expense of 500 for petrol".';
   if (c.includes("income")) return 'To log income, tell me the amount — e.g. "add income of 500 from client x".';
   if (c.includes("profit")) return `For ${range}, your total profit is ${profitStat.value} (${profitStat.delta} vs the previous period).${placeholderNote}`;
-  if (c.includes("project") || c.includes("website")) return "Started a new project workspace for that client. Check Projects to add details.";
+  if (c.includes("project") || c.includes("website")) return "I can't create projects from chat yet, so nothing was created. Please open the Projects page and add it there.";
   if (c.includes("sales")) {
-    const salesRows = context.liveSales || SALES_DATA;
+    const salesRows = Array.isArray(context.liveSales) ? context.liveSales : [];
     const first = salesRows[0];
     const last = salesRows[salesRows.length - 1];
+    const trendLine = first && last
+      ? `$${first.sales.toLocaleString()} on ${first.day} → $${last.sales.toLocaleString()} on ${last.day}`
+      : "not available right now";
     return (
       `Here's the sales report for ${range}:${placeholderNote}\n` +
       `• Total Sales: ${salesStat.value} (${salesStat.delta} vs the previous period)\n` +
-      `• Daily trend: $${first.sales.toLocaleString()} on ${first.day} → $${last.sales.toLocaleString()} on ${last.day}\n` +
+      `• Daily trend: ${trendLine}\n` +
       `• Total Purchases: ${purchaseStat.value} · New Customers: ${customersStat.value}`
     );
   }
@@ -1392,8 +1347,8 @@ export default function Dashboard() {
   const [countryOrdersLoading, setCountryOrdersLoading] = useState(true);
 
   /* Real Sales Overview chart data (approved orders per day/month) —
-     refetched whenever the date-range dropdown changes. Falls back to
-     the mock SALES_DATA array if the call fails. */
+     refetched whenever the date-range dropdown changes. If the call
+     fails the chart shows an error message (no mock data). */
   const [liveSales, setLiveSales] = useState(null);
   const [salesLoading, setSalesLoading] = useState(true);
 
@@ -1404,7 +1359,7 @@ export default function Dashboard() {
         if (!cancelled) setLiveSales(data);
       })
       .catch((err) => {
-        console.error("Sales overview fetch failed, showing demo data instead:", err);
+        console.error("Sales overview fetch failed, showing an error state instead:", err);
       })
       .finally(() => {
         if (!cancelled) setSalesLoading(false);
@@ -1456,7 +1411,7 @@ export default function Dashboard() {
         }
       })
       .catch((err) => {
-        console.error("Most-orders-by-country fetch failed, showing demo data instead:", err);
+        console.error("Most-orders-by-country fetch failed, showing an error state instead:", err);
       })
       .finally(() => {
         if (!cancelled) setCountryOrdersLoading(false);
@@ -3067,9 +3022,13 @@ export default function Dashboard() {
                     <div className="h-[260px] mt-2 -ml-2 flex-1">
                       {salesLoading ? (
                         <div className={`w-full h-full rounded-lg animate-pulse ${darkMode ? "bg-slate-800/60" : "bg-slate-100"}`} />
+                      ) : !liveSales ? (
+                        <div className={`w-full h-full rounded-lg flex items-center justify-center text-center px-6 text-xs ${darkMode ? "bg-slate-800/60 text-slate-400" : "bg-slate-50 text-slate-500"}`}>
+                          Couldn't load sales data right now. Please check your connection and refresh.
+                        </div>
                       ) : (
                       <ResponsiveContainer width="100%" height="100%">
-                        <LineChart key={chartsAnimKey} data={liveSales || SALES_DATA} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                        <LineChart key={chartsAnimKey} data={liveSales} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
                           <CartesianGrid vertical={false} stroke={darkMode ? "#1e293b" : "#eef0f6"} />
                           <XAxis dataKey="day" tick={{ fontSize: 9, fill: darkMode ? "#64748b" : "#94a3b8" }} tickLine={false} axisLine={false} interval={2} />
                           <YAxis tick={{ fontSize: 9, fill: darkMode ? "#64748b" : "#94a3b8" }} tickLine={false} axisLine={false} width={30} />
@@ -3325,7 +3284,11 @@ export default function Dashboard() {
                                 <div className={`h-3 flex-1 rounded-md animate-pulse ${darkMode ? "bg-slate-700/40" : "bg-slate-100"}`} />
                               </div>
                             ))
-                          : (liveCountryOrders || COUNTRY_ORDERS).map((o) => (
+                          : !liveCountryOrders ? (
+                              <p className={`text-xs ${subtleText}`}>
+                                Couldn't load country orders right now. Please refresh.
+                              </p>
+                            ) : liveCountryOrders.map((o) => (
                           <div key={o.name} className="flex items-center gap-2.5">
                             {o.avatar ? (
                               <img
@@ -3373,7 +3336,8 @@ export default function Dashboard() {
                           <path d={WORLD_MAP_PATH} fill={darkMode ? "#334155" : "#c7cdf0"} stroke={darkMode ? "#475569" : "#b7bfe8"} strokeWidth="0.3" />
                         </svg>
                         {(() => {
-                          const topCountry = (liveCountryOrders || COUNTRY_ORDERS)[0];
+                          const topCountry = liveCountryOrders?.[0];
+                          if (!topCountry) return null;
                           const marker = countryMarkerPosition(topCountry?.countryCode);
                           return (
                             <span
