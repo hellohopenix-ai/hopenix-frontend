@@ -39,6 +39,7 @@ import {
 } from "lucide-react";
 import { useAuth, getRoleCategory } from "../AuthContext.jsx";
 import * as projectsApi from "../projectsApi.js";
+import { listAllDaily, bulkDeleteDaily } from "./reportsApi.js";
 import * as messagesApi from "../messagesApi.js";
 import { idbPutMessageMedia } from "./MessagesPage.jsx";
 import { saveAttachmentBlob, getAttachmentBlob } from "../attachmentStorage.js";
@@ -425,140 +426,15 @@ function daysBetween(fromIso, toIso) {
   return Math.round((b - a) / (1000 * 60 * 60 * 24));
 }
 
-/* Only used to seed the demo projects below with plausible-looking
-   team names. Real team/manager assignment in the UI is sourced live
-   from AuthContext's approved users — see `approvedNames` in the main
-   component — not from this static list. */
-const SEED_TEAM_POOL = [
-  "Usman Ahmad", "Ali Raza", "Sara Khan", "Zain Ali", "Ayesha Noor",
-  "Bilal Ahmed", "Hina Malik", "Farhan Shah", "Mahnoor Iqbal", "Danish Aziz",
-];
-
-function pickTeam(seed, count) {
-  const out = [];
-  for (let i = 0; i < count; i++) out.push(SEED_TEAM_POOL[(seed + i * 3) % SEED_TEAM_POOL.length]);
-  return out;
+/* FIX: the old demo/seed projects (SEED_PROJECTS) were removed. When the
+   backend was unreachable and the cache was empty they used to show up as
+   if they were real projects. Real data only comes from the backend now. */
+// Old builds cached the fake demo rows with ids like "p1", "p2" ... — real
+// backend ids are never of that shape, so drop them if they're still lying
+// around in someone's localStorage.
+function isLegacySeedProject(item) {
+  return typeof item?.id === "string" && /^p\d+$/.test(item.id);
 }
-
-// Completion dates for the demo's already-"Completed" seed projects, so
-// the new performance stats (early/on-time/late + bonus) have something
-// realistic to show out of the box instead of every legacy project
-// silently defaulting to "on time". Any REAL project completed later
-// (via setStatus/handleEditSave) gets its actual completion date
-// recorded automatically — this map only backfills the 3 seed rows.
-const SEED_COMPLETED_DATES = {
-  "Inventory Management": "2025-05-12", // 3 days before its 2025-05-15 deadline -> early
-  "Client Support Portal": "2025-04-30", // matches its deadline -> on time
-  "Social Media Scheduler": "2025-04-25", // 3 days after its 2025-04-22 deadline -> late
-};
-
-const MODULE_SEED_NAMES = ["Requirements & Planning", "UI/UX Design", "Core Development", "QA & Testing", "Deployment"];
-const MODULE_SEED_DESCRIPTIONS = [
-  "Gathering requirements and defining project scope",
-  "Wireframes, prototypes and visual design",
-  "Building out the core application features",
-  "Functional testing and bug fixing",
-  "Releasing the application to production",
-];
-const MODULE_SEED_PRICES = [1500, 2500, 4000, 1800, 1200];
-
-/* Seed 24 projects so the table + pagination behave like the reference. */
-function buildSeedProjects() {
-  const defs = [
-    ["E-Commerce Website", "Online store with payment integration", 0, "In Progress", 12, 18, "2025-05-30", 25000, 16750],
-    ["Mobile Banking App", "Secure banking application", 1, "In Progress", 15, 20, "2025-06-10", 42000, 31500],
-    ["CRM System", "Customer relationship management", 2, "In Review", 22, 25, "2025-05-25", 30000, 26400],
-    ["Inventory Management", "Stock & inventory tracking system", 3, "Completed", 10, 10, "2025-05-15", 18000, 18000],
-    ["HR Management System", "Employee management solution", 4, "In Progress", 8, 15, "2025-06-05", 20000, 10600],
-    ["Company Website Redesign", "Corporate website redesign", 0, "On Hold", 6, 12, "2025-06-20", 12000, 6000],
-    ["Marketing Campaign Portal", "Campaign tracking & analytics", 5, "On Hold", 4, 11, "2025-07-02", 9000, 3200],
-    ["Payment Gateway Integration", "Multi payment gateway setup", 6, "In Progress", 7, 10, "2025-05-28", 15000, 10500],
-    ["Data Analytics Dashboard", "Business analytics & reporting", 7, "In Review", 13, 18, "2025-06-12", 26000, 18700],
-    ["Real-time Chat System", "In-app messaging solution", 8, "In Progress", 11, 14, "2025-06-08", 16000, 12480],
-    ["Warehouse Tracking Tool", "Barcode based stock tracking", 3, "In Progress", 5, 16, "2025-06-25", 21000, 6500],
-    ["Client Support Portal", "Ticketing & live support", 2, "Completed", 14, 14, "2025-04-30", 17500, 17500],
-    ["Loyalty Rewards App", "Points-based rewards system", 6, "In Progress", 9, 20, "2025-07-10", 23000, 9800],
-    ["Fleet Management System", "Vehicle tracking & scheduling", 1, "Cancelled", 2, 12, "2025-05-05", 14000, 2100],
-    ["Recruitment Portal", "Applicant tracking system", 4, "In Progress", 6, 15, "2025-06-18", 15500, 6200],
-    ["Restaurant POS System", "Point of sale for restaurants", 7, "In Review", 17, 19, "2025-06-02", 19000, 16800],
-    ["Learning Management System", "Online courses & assessments", 5, "In Progress", 10, 24, "2025-07-20", 32000, 12000],
-    ["Hotel Booking Platform", "Room booking & reservations", 8, "On Hold", 3, 18, "2025-07-15", 27000, 5400],
-    ["Healthcare Patient Portal", "Appointment & records system", 0, "In Progress", 12, 22, "2025-07-05", 34000, 18900],
-    ["Social Media Scheduler", "Multi-platform post scheduling", 6, "Completed", 11, 11, "2025-04-22", 13000, 13000],
-    ["Expense Tracker App", "Personal finance tracking", 2, "In Progress", 8, 13, "2025-06-14", 11000, 6100],
-    ["Real Estate Listings Site", "Property search & listings", 1, "In Review", 15, 17, "2025-06-06", 24000, 20100],
-    ["Freight Logistics Dashboard", "Shipment tracking & routing", 3, "Cancelled", 1, 14, "2025-05-10", 18500, 1800],
-    ["Event Management Platform", "Ticketing & event planning", 4, "In Progress", 9, 21, "2025-07-25", 29000, 10300],
-  ];
-  return defs.map(([name, desc, clientIdx, status, done, total, deadline, budget, spent], i) => {
-    // FIX: these demo/placeholder projects used to be seeded with made-up
-    // names from SEED_TEAM_POOL as their manager/team, which showed up in
-    // the UI as fake employees/users that don't actually exist in the
-    // system. Real manager/team assignment always comes from approved
-    // users (picked in Create/Edit Project), so seed projects now start
-    // with no manager/team assigned instead of fabricated people.
-    const manager = "Unassigned";
-    const team = [];
-    return {
-      id: `p${i + 1}`,
-      name,
-      description: desc,
-      client: CLIENTS[clientIdx],
-      manager,
-      team,
-      status,
-      deadline,
-      startDate: "2025-05-01",
-      budget,
-      spent,
-      // When the project was actually finished (only meaningful once
-      // status === "Completed"). Drives the early/on-time/late delivery
-      // stats in computeUserPerformance below.
-      completedOn: status === "Completed" ? SEED_COMPLETED_DATES[name] || deadline : undefined,
-      deliverable: { name: "handoff_v" + ((i % 3) + 1) + ".fig", date: "2025-05-12", size: 1.2 + (i % 5) * 0.6 },
-      priority: ["Low", "Medium", "High"][i % 3],
-      notes: "No additional notes have been added to this project yet.",
-      // Features & Requirements — free-form notes so anyone opening the
-      // project can understand what actually has to be built, without
-      // digging through modules/tasks. Both are plain text, editable any
-      // time from Create/Edit, and saved permanently with the project.
-      features: "",
-      requirements: "",
-      // Set once the project is marked Completed via the "Mark as
-      // Completed" flow — an openable, working link (deployed site,
-      // repo, doc, etc.) the client/team can actually click through to.
-      completionLink: status === "Completed" ? "https://example.com/" + name.toLowerCase().replace(/[^a-z0-9]+/g, "-") : null,
-      // Per-project modules (features/phases) — each project keeps its own
-      // independent list so adding a module here never affects other
-      // projects. Admin/managers can add more from the Edit Project modal.
-      modules: MODULE_SEED_NAMES.slice(0, 2 + (i % 3)).map((name, mi) => {
-        const totalMods = 2 + (i % 3);
-        // Reuse the old done/total ratio just to give the seed data a
-        // plausible-looking spread of module statuses out of the box.
-        const completedCount = total ? Math.round((done / total) * totalMods) : 0;
-        const modStatus =
-          status === "Completed" ? "Completed" : mi < completedCount ? "Completed" : mi === completedCount ? "In Progress" : "Pending";
-        return {
-          id: `${i + 1}-m${mi + 1}`,
-          name,
-          description: MODULE_SEED_DESCRIPTIONS[mi] || "",
-          price: MODULE_SEED_PRICES[mi] || 0,
-          addedOn: "2025-05-01",
-          // No real manager/team on seed rows (see note above), so
-          // seed modules also start Unassigned rather than fabricated.
-          assignee: "Unassigned",
-          status: modStatus,
-          priority: ["Low", "Medium", "High"][(i + mi) % 3],
-          dueDate: deadline,
-          url: "",
-          files: [],
-        };
-      }),
-    };
-  });
-}
-
-const SEED_PROJECTS = buildSeedProjects();
 
 /* ======================================================================
    PERSISTENCE (localStorage) — keeps created/edited/deleted projects
@@ -594,7 +470,7 @@ function loadStoredProjects() {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
-        const validProjects = parsed.filter(isValidStoredProject);
+        const validProjects = parsed.filter(isValidStoredProject).filter((p) => !isLegacySeedProject(p));
         if (validProjects.length) return validProjects;
       }
     }
@@ -604,7 +480,7 @@ function loadStoredProjects() {
     if (legacyRaw) {
       const legacyParsed = JSON.parse(legacyRaw);
       if (Array.isArray(legacyParsed)) {
-        const legacyValidProjects = legacyParsed.filter(isValidStoredProject);
+        const legacyValidProjects = legacyParsed.filter(isValidStoredProject).filter((p) => !isLegacySeedProject(p));
         if (legacyValidProjects.length) {
           try {
             window.localStorage.setItem(STORAGE_KEY, JSON.stringify(legacyValidProjects));
@@ -615,9 +491,9 @@ function loadStoredProjects() {
         }
       }
     }
-    return SEED_PROJECTS;
+    return [];
   } catch {
-    return SEED_PROJECTS;
+    return [];
   }
 }
 
@@ -631,79 +507,36 @@ function saveStoredProjects(projects) {
 
 /* ======================================================================
    LINK TO REPORTS PAGE — daily reports (with their photo/video proof)
-   are tagged with a project name over on ReportsPage.jsx. These constants
-   are copied EXACTLY from ReportsPage.jsx's own DAILY_REPORTS_LS_KEY /
-   MEDIA_DB_NAME / MEDIA_DB_STORE so both pages agree on where that data
-   lives without needing a shared context. Two things use this link:
+   are tagged with a project name and now live on the BACKEND
+   (/api/reports/daily/, see ReportsPage.jsx / reportsApi.js), not in this
+   browser's localStorage/IndexedDB any more. Two things use this link:
      1. "View Daily Reports" on a completed project jumps to Reports with
         that project pre-filtered (see PROJECT_FOCUS_LS_KEY below).
      2. Deleting a project also deletes every daily report tagged with it,
         photos/videos included — see purgeDailyReportsForProject().
 ====================================================================== */
 
-const DAILY_REPORTS_LS_KEY = "reportspage_daily_reports_v1";
-const MEDIA_DB_NAME = "reportspage_daily_media_v1";
-const MEDIA_DB_STORE = "files";
 const PROJECT_FOCUS_LS_KEY = "reportspage_project_focus_v1";
 
-function openMediaDB() {
-  return new Promise((resolve, reject) => {
-    if (typeof indexedDB === "undefined") {
-      reject(new Error("IndexedDB unavailable"));
-      return;
-    }
-    const req = indexedDB.open(MEDIA_DB_NAME, 1);
-    req.onupgradeneeded = () => {
-      if (!req.result.objectStoreNames.contains(MEDIA_DB_STORE)) {
-        req.result.createObjectStore(MEDIA_DB_STORE);
-      }
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-
-async function idbDeleteFile(id) {
-  try {
-    const db = await openMediaDB();
-    await new Promise((resolve, reject) => {
-      const tx = db.transaction(MEDIA_DB_STORE, "readwrite");
-      tx.objectStore(MEDIA_DB_STORE).delete(id);
-      tx.oncomplete = resolve;
-      tx.onerror = () => reject(tx.error);
-    });
-    db.close();
-  } catch {
-    // Nothing to clean up if it was never persisted in the first place.
-  }
-}
-
-// Deletes every daily report tagged with `projectName` from ReportsPage's
-// storage — metadata out of localStorage, each attached photo/video out of
-// IndexedDB — then tells any already-open Reports page to refresh. Best
-// effort: if storage/IndexedDB is unavailable this just no-ops rather than
-// blocking the project deletion itself.
+// Deletes every daily report tagged with `projectName` ON THE SERVER (the
+// backend removes the attached photos/videos too), then tells any already-
+// open Reports page to refresh. Returns how many reports were deleted and
+// THROWS if the server call fails, so callers can tell the user instead of
+// silently leaving reports behind. (Before this fix it only cleaned this
+// browser's old localStorage copy, so the real reports stayed on the
+// server after a project was deleted.)
 async function purgeDailyReportsForProject(projectName) {
   if (!projectName) return 0;
-  let list = [];
-  try {
-    const raw = window.localStorage.getItem(DAILY_REPORTS_LS_KEY);
-    list = raw ? JSON.parse(raw) : [];
-    if (!Array.isArray(list)) list = [];
-  } catch {
-    return 0;
+  let deleted = 0;
+  for (let round = 0; round < 5; round += 1) {
+    const { results } = await listAllDaily({ project: projectName });
+    const ids = (results || []).filter((r) => r?.project === projectName).map((r) => r.id);
+    if (ids.length === 0) break;
+    const res = await bulkDeleteDaily(ids);
+    deleted += res?.deleted ?? ids.length;
   }
-  const toDelete = list.filter((r) => r?.project === projectName);
-  if (toDelete.length === 0) return 0;
-  await Promise.all(toDelete.flatMap((r) => (r.files || []).map((f) => idbDeleteFile(f.id))));
-  const remaining = list.filter((r) => r?.project !== projectName);
-  try {
-    window.localStorage.setItem(DAILY_REPORTS_LS_KEY, JSON.stringify(remaining));
-  } catch {
-    // storage unavailable — nothing further we can do
-  }
-  window.dispatchEvent(new Event("daily-reports-changed"));
-  return toDelete.length;
+  if (deleted > 0) window.dispatchEvent(new Event("daily-reports-changed"));
+  return deleted;
 }
 
 /* ======================================================================
@@ -1651,6 +1484,11 @@ export default function ProjectsPage({ darkMode = false, conversations, setConve
   const [projects, setProjects] = useState([]);
   const [projectsLoading, setProjectsLoading] = useState(true);
   const [projectsError, setProjectsError] = useState("");
+  const [projectsShowingCache, setProjectsShowingCache] = useState(false);
+  // Becomes true only after a real fetch from the backend succeeds. Until
+  // then the save-to-localStorage effect below must NOT run, otherwise the
+  // initial empty list would overwrite the last good cached copy.
+  const projectsHydratedRef = useRef(false);
 
   // Real data: fetch the live project list from the Django backend on
   // mount (and whenever the approved-users list first becomes available,
@@ -1668,13 +1506,19 @@ export default function ProjectsPage({ darkMode = false, conversations, setConve
         const mapped = (Array.isArray(data) ? data : data?.results || []).map((bp) =>
           backendProjectToFrontend(bp, approvedUsers)
         );
+        projectsHydratedRef.current = true; // from here on it's safe to cache edits
         setProjects(mapped);
         setProjectsError("");
+        setProjectsShowingCache(false);
         saveStoredProjects(mapped); // keep the cache fresh for other pages that read it
       } catch (err) {
         if (cancelled) return;
         setProjectsError(err.message || "Couldn't reach the server.");
-        setProjects(loadStoredProjects()); // fall back to last-known cache
+        // Fall back to the last copy that really came from the server. Never
+        // to fake demo data: if there's no real cache the list stays empty.
+        const cached = loadStoredProjects();
+        setProjects(cached);
+        setProjectsShowingCache(cached.length > 0);
       } finally {
         if (!cancelled) setProjectsLoading(false);
       }
@@ -1806,6 +1650,7 @@ export default function ProjectsPage({ darkMode = false, conversations, setConve
   // Save to localStorage every time the projects list changes (create/edit/status/delete)
   // so navigating to another page and back keeps everything until you explicitly delete it.
   useEffect(() => {
+    if (!projectsHydratedRef.current) return; // don't cache the pre-fetch empty list / offline fallback
     saveStoredProjects(projects);
   }, [projects]);
 
@@ -2094,7 +1939,14 @@ export default function ProjectsPage({ darkMode = false, conversations, setConve
     // photo/video) tagged with it over on the Reports page — nothing
     // related should be left behind pointing at a project that no longer
     // exists. Best-effort/async: never blocks the project deletion itself.
-    if (target?.name) purgeDailyReportsForProject(target.name);
+    if (target?.name) {
+      purgeDailyReportsForProject(target.name).catch((err) => {
+        showToast(
+          `Project deleted, but its daily reports couldn't be removed (${err?.message || "server error"}). You can delete them from the Reports page.`,
+          "error"
+        );
+      });
+    }
     showToast(`${target?.name || "Project"} deleted.`, "error");
   };
 
@@ -2126,7 +1978,13 @@ export default function ProjectsPage({ darkMode = false, conversations, setConve
     const ok = window.confirm(`Delete every daily report logged for "${project.name}"? This removes all its photos/videos too and can't be undone.`);
     if (!ok) return;
     setOpenActionMenu(null);
-    const count = await purgeDailyReportsForProject(project.name);
+    let count = 0;
+    try {
+      count = await purgeDailyReportsForProject(project.name);
+    } catch (err) {
+      showToast(err?.message || "Couldn't delete the daily reports on the server.", "error");
+      return;
+    }
     showToast(count > 0 ? `Deleted ${count} daily report${count === 1 ? "" : "s"} for ${project.name}.` : `No daily reports found for ${project.name}.`, count > 0 ? "success" : "error");
   };
 
@@ -2904,7 +2762,10 @@ export default function ProjectsPage({ darkMode = false, conversations, setConve
       )}
       {!projectsLoading && projectsError && (
         <div className="text-xs px-3.5 py-2 rounded-lg bg-rose-50 text-rose-600">
-          Couldn't reach the backend ({projectsError}) — showing the last saved copy. Check that <code>python manage.py runserver</code> is running.
+          Couldn't load projects from the server ({projectsError}).{" "}
+          {projectsShowingCache
+            ? "Showing the last copy saved from the server — it may be out of date."
+            : "No saved copy is available, so nothing is shown. Please check your connection and reload."}
         </div>
       )}
 

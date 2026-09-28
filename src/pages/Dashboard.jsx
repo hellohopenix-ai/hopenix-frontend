@@ -748,27 +748,12 @@ const INITIAL_MESSAGES = [
 ];
 
 /* -------------------------------------------------------------------------
- * Seed data used by the AI Assistant panel's own expense/income commands
- * (see pushExpense / pushIncome below) and by the PDF export. The
- * Expenses and Income *pages* themselves are now the full standalone
- * ExpensesPage.jsx / IncomePage.jsx components (imported above, same
- * pattern as Users/Tasks/Projects/Employees/Clients) and manage their own
- * display data — this seed just keeps the AI Assistant + PDF export
- * working without needing to reach into those pages' internals.
+ * NOTE: the old SEED_EXPENSES / SEED_INCOME sample rows were removed. The
+ * AI Assistant's expense/income commands and the PDF export now use only
+ * real backend data. The Expenses and Income *pages* are the standalone
+ * ExpensesPage.jsx / IncomePage.jsx components (imported above) and manage
+ * their own display data.
  * ---------------------------------------------------------------------- */
-const SEED_EXPENSES = [
-  { id: 1, note: "Office rent", category: "Rent", amount: 1200, date: "May 1, 2025", addedVia: "Manual" },
-  { id: 2, note: "Team lunch", category: "Food", amount: 85, date: "May 6, 2025", addedVia: "Manual" },
-  { id: 3, note: "Software subscriptions", category: "Software", amount: 249, date: "May 12, 2025", addedVia: "Manual" },
-  { id: 4, note: "Office supplies", category: "Supplies", amount: 60, date: "May 18, 2025", addedVia: "Manual" },
-];
-
-const SEED_INCOME = [
-  { id: 1, note: "Website project — Al Falah Traders", category: "Project", amount: 3200, date: "May 3, 2025", addedVia: "Manual" },
-  { id: 2, note: "CRM System — final payment", category: "Project", amount: 1800, date: "May 15, 2025", addedVia: "Manual" },
-  { id: 3, note: "Consulting retainer", category: "Retainer", amount: 900, date: "May 20, 2025", addedVia: "Manual" },
-];
-
 /* -------------------------------------------------------------------------
  * AI ASSISTANT COMMAND PARSING
  * The assistant recognises these kinds of typed commands:
@@ -1931,9 +1916,9 @@ export default function Dashboard() {
   }, [user, approvedUsers, conversations, setConversations]);
   // The AI Assistant's own expense/income commands now go straight to
   // the real backend (see pushExpense/pushIncome above) and read back
-  // from liveExportExpenses/liveExportIncome — SEED_EXPENSES/SEED_INCOME
-  // below are kept only as the PDF export's placeholder fallback (see
-  // exportReport) for if that live fetch hasn't loaded/failed.
+  // from liveExportExpenses/liveExportIncome. If that live fetch hasn't
+  // loaded / failed, the PDF export leaves those sections out (see
+  // exportReport) rather than printing sample rows.
   // When the AI Assistant asks a follow-up question ("what would you like
   // to send to everyone?"), this remembers what it's waiting for so the
   // user's very next message is used as the answer instead of being
@@ -2329,10 +2314,16 @@ export default function Dashboard() {
     // after export instead of quietly exporting fake numbers unlabeled.
     const placeholderSections = [];
 
-    // isLive=false marks the section as using placeholder data: it's
-    // both noted in the PDF itself (small amber line under the title)
-    // and collected into placeholderSections for the post-export alert.
+    // isLive=false marks a section whose live data couldn't be loaded: no
+    // table (and no made-up sample numbers) is drawn for it. It's noted in
+    // the PDF itself (small amber line under the title) and collected into
+    // placeholderSections for the post-export alert.
     const sectionTitle = (title, isLive = true) => {
+      // Don't start a section in the last few lines of a page.
+      if (cursorY > doc.internal.pageSize.getHeight() - 90) {
+        doc.addPage();
+        cursorY = 60;
+      }
       doc.setFont("helvetica", "bold");
       doc.setFontSize(13);
       doc.setTextColor(...violet);
@@ -2345,9 +2336,9 @@ export default function Dashboard() {
         doc.setFont("helvetica", "italic");
         doc.setFontSize(8);
         doc.setTextColor(...amber);
-        doc.text("Live data unavailable — showing placeholder figures", marginX, cursorY);
+        doc.text("Live data unavailable — this section was left out (no sample numbers are shown).", marginX, cursorY);
         doc.setTextColor(0, 0, 0);
-        cursorY -= 4;
+        cursorY += 28; // room before the next section; no table is drawn
       }
     };
 
@@ -2371,66 +2362,73 @@ export default function Dashboard() {
     // ---------- Summary ----------
     const liveSummary = liveStats; // same [{value,delta}, ...] shape as STAT_CARDS order
     sectionTitle("Summary", !!liveSummary);
-    const summaryStats = liveSummary || STATS_BY_RANGE[selectedDateRange] || STATS_BY_RANGE["This Month"];
-    runTable(
-      ["Metric", "Value", "Change vs last month"],
-      STAT_CARDS.map((s, i) => [s.label, String(summaryStats[i].value), String(summaryStats[i].delta)])
-    );
+    if (liveSummary) {
+      runTable(
+        ["Metric", "Value", "Change vs last month"],
+        STAT_CARDS.map((s, i) => [s.label, String(liveSummary[i].value), String(liveSummary[i].delta)])
+      );
+    }
 
     // ---------- Sales Overview ----------
     sectionTitle("Sales Overview", !!liveSales);
-    const salesRows = liveSales || SALES_DATA;
-    runTable(
-      ["Day", "Sales", "Base"],
-      salesRows.map((s) => [s.day, String(s.sales), String(s.base)])
-    );
+    if (liveSales) {
+      runTable(
+        ["Day", "Sales", "Base"],
+        liveSales.map((s) => [s.day, String(s.sales), String(s.base)])
+      );
+    }
 
     // ---------- Weekly Statistics ----------
     sectionTitle(`Statistics — ${statsMetric} (${statsPeriod})`, !!liveStatsForMetric);
-    runTable(
-      ["Day", "Value (%)", "Change"],
-      currentStats.bars.map((s) => [s.day, String(s.value), String(s.delta)])
-    );
+    if (liveStatsForMetric) {
+      runTable(
+        ["Day", "Value (%)", "Change"],
+        liveStatsForMetric.bars.map((s) => [s.day, String(s.value), String(s.delta)])
+      );
+    }
 
     // ---------- Most Orders by Country ----------
     sectionTitle("Most Orders by Country", !!liveCountryOrders);
-    const countryRows = liveCountryOrders || COUNTRY_ORDERS;
-    runTable(
-      ["Name", "City", "Amount", "Rank"],
-      countryRows.map((o) => [o.name, o.city, String(o.amount), String(o.rank)])
-    );
+    if (liveCountryOrders) {
+      runTable(
+        ["Name", "City", "Amount", "Rank"],
+        liveCountryOrders.map((o) => [o.name, o.city, String(o.amount), String(o.rank)])
+      );
+    }
 
     // ---------- Expenses ----------
     // Real expenses.Expense records (same ones ExpensesPage.jsx shows),
     // not the AI Assistant's local-only `expenses` seed state.
     sectionTitle("Expenses", !!liveExportExpenses);
-    const expenseRows = liveExportExpenses || SEED_EXPENSES;
-    runTable(
-      ["Title", "Category", "Amount", "Date", "Status"],
-      expenseRows.map((e) => [
-        e.title ?? e.note,
-        e.category,
-        String(e.amount),
-        e.date,
-        e.status ?? e.addedVia,
-      ])
-    );
+    if (liveExportExpenses) {
+      runTable(
+        ["Title", "Category", "Amount", "Date", "Status"],
+        liveExportExpenses.map((e) => [
+          e.title ?? e.note,
+          e.category,
+          String(e.amount),
+          e.date,
+          e.status ?? e.addedVia,
+        ])
+      );
+    }
 
     // ---------- Income ----------
     // Real dashboard.Income records (same ones IncomePage.jsx shows),
     // not the AI Assistant's local-only `income` seed state.
     sectionTitle("Income", !!liveExportIncome);
-    const incomeRows = liveExportIncome || SEED_INCOME;
-    runTable(
-      ["Description", "Client/Project", "Amount", "Date", "Status"],
-      incomeRows.map((e) => [
-        e.desc ?? e.note,
-        e.client || e.project || "",
-        String(e.amount),
-        e.date,
-        e.status ?? e.addedVia,
-      ])
-    );
+    if (liveExportIncome) {
+      runTable(
+        ["Description", "Client/Project", "Amount", "Date", "Status"],
+        liveExportIncome.map((e) => [
+          e.desc ?? e.note,
+          e.client || e.project || "",
+          String(e.amount),
+          e.date,
+          e.status ?? e.addedVia,
+        ])
+      );
+    }
 
     // ---------- Footer page numbers ----------
     const pageCount = doc.internal.getNumberOfPages();
@@ -2455,7 +2453,7 @@ export default function Dashboard() {
       // should know which part before treating it as real.
       window.alert(
         `Exported, but couldn't load live data for: ${placeholderSections.join(", ")}. ` +
-          "Those sections show placeholder figures, not real numbers."
+          "Those sections were left out of the PDF instead of showing made-up numbers. Please reload and export again."
       );
     }
 

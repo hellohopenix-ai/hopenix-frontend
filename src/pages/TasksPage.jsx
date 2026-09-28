@@ -1672,12 +1672,21 @@ function syncClientModuleTasks(tasks, clients, approvedUsers) {
 // failing to save at all.
 function sanitizeTaskForBackend(t) {
   // Strip local-only fields (clientName and createdOn are read-only on the
-  // backend; moduleId/subModuleId/fromClientAssignment are frontend-only
-  // IDs that the backend doesn't know). Keep moduleBackendId so the
-  // backend can stamp Task.module FK (the real projects.Module pk).
+  // backend). moduleId / subModuleId / fromClientAssignment USED to be
+  // stripped here too, but the backend now stores them (tasks migration
+  // 0004), so they are sent along and survive a reload / another browser.
+  // Keep moduleBackendId so the backend can stamp Task.module FK (the real
+  // projects.Module pk).
   const { id, clientId, moduleId, subModuleId, fromClientAssignment, clientName, createdOn, moduleProjectBackendId, ...rest } = t;
+  const out = { ...rest };
+  // moduleId / subModuleId are text columns: send a string, or nothing.
+  if (moduleId !== undefined && moduleId !== null && moduleId !== "") out.moduleId = String(moduleId);
+  // "no sub-module" is null on the frontend; the backend stores that as "".
+  if (subModuleId !== undefined && subModuleId !== null && subModuleId !== "") out.subModuleId = String(subModuleId);
+  // The backend's BooleanField rejects null, so only send a real boolean.
+  if (typeof fromClientAssignment === "boolean") out.fromClientAssignment = fromClientAssignment;
   const numericClientId = clientId != null && /^\d+$/.test(String(clientId)) ? Number(clientId) : null;
-  return numericClientId != null ? { ...rest, clientId: numericClientId } : rest;
+  return numericClientId != null ? { ...out, clientId: numericClientId } : out;
 }
 
 // FIX (auto-generated tasks vanished after reload / never showed up for
