@@ -845,12 +845,15 @@ export function AuthProvider({ children }) {
   }
 
   async function logout() {
+    // Must run BEFORE /logout/ below: that call deletes the auth token on the
+    // server, so unsubscribing afterwards always came back 401 and the
+    // server-side push subscription row was never removed.
+    await clearPushSubscription(); // this device stops receiving call pushes
     try {
       await apiFetch("/logout/", { method: "POST" });
     } catch {
       // even if the network call fails, still clear the local session below
     }
-    clearPushSubscription(); // fire-and-forget — this device stops receiving call pushes
     localStorage.removeItem(TOKEN_KEY);
     setUser(null);
     setUsers([]);
