@@ -175,6 +175,27 @@ const WORKSPACE_VISUAL = { photo: image1 };
 const CNIC_RE = /^\d{5}-?\d{7}-?\d{1}$/;
 const PASSPORT_RE = /^[A-Za-z]{1,2}\d{6,8}$/;
 const PHONE_RE = /^(\+92|0)?3\d{2}-?\d{7}$/;
+
+// Chair numbers are free text ("C-04, C-05"). Same rules as the server
+// (coworking/models.py normalize_chair): "C-04", "c04" and "C 4" are one chair.
+const splitChairs = (raw) => String(raw || "").split(/[,;/\n]+/).map((c) => c.trim()).filter(Boolean);
+const normalizeChair = (label) =>
+  String(label || "").replace(/[\s\-_.]+/g, "").toUpperCase().replace(/\d+/g, (n) => String(parseInt(n, 10)));
+// Every chair already held by a Pending/Approved application (Rejected ones free their chairs).
+function occupiedChairKeys(records) {
+  const taken = new Set();
+  (records || []).forEach((r) => {
+    if (r.status === "Rejected") return;
+    const a = r.application || {};
+    [
+      ...splitChairs(a.assignedChairs),
+      ...(a.members || []).flatMap((m) => splitChairs(m.chairNo)),
+      ...splitChairs(r.review?.chairNos),
+    ].forEach((c) => taken.add(normalizeChair(c)));
+  });
+  taken.delete("");
+  return taken;
+}
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const STEPS = [
@@ -551,6 +572,17 @@ export default function CoworkingSpacePage({ darkMode, onNavigate, role }) {
         if (m.phone.trim() && !PHONE_RE.test(m.phone.trim())) errs[`member_${i}_phone`] = "Invalid phone format";
       });
       if (!namedMembers.length) errs.members = "Add at least one member/occupant";
+
+      // A chair that another (non-rejected) application already holds can't be taken again.
+      const taken = occupiedChairKeys(records);
+      const busyAssigned = splitChairs(form.assignedChairs).filter((c) => taken.has(normalizeChair(c)));
+      if (busyAssigned.length) {
+        errs.assignedChairs = `${busyAssigned.join(", ")} ${busyAssigned.length > 1 ? "are" : "is"} already occupied — choose a different chair`;
+      }
+      form.members.forEach((m, i) => {
+        const busy = splitChairs(m.chairNo).filter((c) => taken.has(normalizeChair(c)));
+        if (busy.length) errs[`member_${i}_chair`] = "This chair is already occupied";
+      });
     }
 
     if (current === 4) {
@@ -1294,8 +1326,8 @@ export default function CoworkingSpacePage({ darkMode, onNavigate, role }) {
                 </div>
               </div>
               <div className="grid sm:grid-cols-2 gap-2.5">
-                <Field label="Assigned Chair / Workstation No(s).">
-                  <input className={inputBase} placeholder="e.g. C-04" value={form.assignedChairs} onChange={set("assignedChairs")} />
+                <Field label="Assigned Chair / Workstation No(s)." error={errors.assignedChairs}>
+                  <input className={errors.assignedChairs ? errorInputBase : inputBase} placeholder="e.g. C-04" value={form.assignedChairs} onChange={set("assignedChairs")} />
                 </Field>
                 <Field label="Special Requirements / Notes">
                   <input className={inputBase} placeholder="Optional" value={form.specialNotes} onChange={set("specialNotes")} />
@@ -1336,7 +1368,10 @@ export default function CoworkingSpacePage({ darkMode, onNavigate, role }) {
                         <input className={errors[`member_${idx}_phone`] ? errorInputBase : inputBase} placeholder="Phone" value={m.phone} onChange={(e) => updateMember(m.id, "phone", e.target.value)} />
                         {errors[`member_${idx}_phone`] && <p className="text-[10px] text-rose-500 mt-1 sm:hidden">{errors[`member_${idx}_phone`]}</p>}
                       </div>
-                      <input className={inputBase} placeholder="Chair No." value={m.chairNo} onChange={(e) => updateMember(m.id, "chairNo", e.target.value)} />
+                      <div>
+                        <input className={errors[`member_${idx}_chair`] ? errorInputBase : inputBase} placeholder="Chair No." value={m.chairNo} onChange={(e) => updateMember(m.id, "chairNo", e.target.value)} />
+                        {errors[`member_${idx}_chair`] && <p className="text-[10px] text-rose-500 mt-1">{errors[`member_${idx}_chair`]}</p>}
+                      </div>
                       <button type="button" onClick={() => removeMember(m.id)} className="hidden sm:block text-rose-500 hover:text-rose-400 disabled:opacity-30" disabled={form.members.length === 1}>
                         <Trash2 size={14} />
                       </button>
