@@ -40,6 +40,7 @@ import {
 } from "lucide-react";
 import { sendReportMessage } from "./MessagesPage.jsx";
 import * as reportsApi from "./reportsApi.js";
+import { useLiveRefresh, sameJson } from "../useLiveRefresh.js";
 import ActivitySection from "./ReportsActivity.jsx";
 import {
   LineChart,
@@ -610,6 +611,22 @@ export default function ReportsPage({
     reportsApi.listProjectNames().then(setProjects).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshTick]);
+
+  // Live: reports/approvals made on another device appear without a reload.
+  // Silent (no error toasts) so a network blip never spams the user.
+  useLiveRefresh(
+    async () => {
+      const res = await reportsApi.listAllDaily();
+      setDailyReports((prev) => (sameJson(prev, res.results) ? prev : res.results));
+      if (isAdmin) {
+        const [sum, cat] = await Promise.all([reportsApi.getSummary(rangeParams), reportsApi.getCatalog(rangeParams)]);
+        setSummary((prev) => (sameJson(prev, sum) ? prev : sum));
+        const rows = cat.results.map(toReportRow);
+        setReports((prev) => (sameJson(prev, rows) ? prev : rows));
+      }
+    },
+    { interval: 20000 }
+  );
 
   // Something outside this page (e.g. ProjectsPage) changed daily reports.
   useEffect(() => {
