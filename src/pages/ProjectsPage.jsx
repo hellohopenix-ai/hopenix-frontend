@@ -507,16 +507,27 @@ function saveStoredProjects(projects) {
 
 /* ======================================================================
    LINK TO REPORTS PAGE — daily reports (with their photo/video proof)
-   are tagged with a project name and now live on the BACKEND
-   (/api/reports/daily/, see ReportsPage.jsx / reportsApi.js), not in this
-   browser's localStorage/IndexedDB any more. Two things use this link:
+   are tagged with a project name and live entirely on the BACKEND
+   (/api/reports/daily/ — create, list, delete, approve, all of it; see
+   ReportsPage.jsx / reportsApi.js). Nothing about the reports themselves
+   is stored in this browser. Two things use the project<->reports link:
+
      1. "View Daily Reports" on a completed project jumps to Reports with
-        that project pre-filtered (see PROJECT_FOCUS_LS_KEY below).
+        that project pre-filtered — via PROJECT_FOCUS_LS_KEY below, which
+        is NOT report data. It's a one-shot, same-tab navigation signal:
+        set immediately before navigate("Reports"), read + deleted by
+        ReportsPage the moment it mounts (see its onHandOff effect). It
+        never outlives that single click, so it's intentionally local and
+        does not need — and must not get — a cross-device/backend sync;
+        syncing it would leak "what I'm looking at" between users sharing
+        an account, which is the opposite of what it's for.
      2. Deleting a project also deletes every daily report tagged with it,
-        photos/videos included — see purgeDailyReportsForProject().
+        photos/videos included, on the server — purgeDailyReportsForProject()
+        below throws if that server call fails so the caller can tell the
+        user, instead of silently leaving orphaned reports behind.
 ====================================================================== */
 
-const PROJECT_FOCUS_LS_KEY = "reportspage_project_focus_v1";
+const PROJECT_FOCUS_LS_KEY = "reportspage_project_focus_v1"; // one-shot nav hint only — see note above, not synced
 
 // Deletes every daily report tagged with `projectName` ON THE SERVER (the
 // backend removes the attached photos/videos too), then tells any already-
@@ -1424,8 +1435,9 @@ function ModulesSection({ project, isAdmin, currentUser, darkMode, cardText, mut
    accepts (e.g. Dashboard.jsx wiring `onNavigate={(page) => setActivePage(page)}`).
    It's what "View Daily Reports" on a completed project uses to jump over
    to the Reports page already filtered to that project. If it's missing,
-   the daily-report link is still written to localStorage — the user just
-   has to switch to Reports manually to see it applied. */
+   the one-shot nav hint (PROJECT_FOCUS_LS_KEY, see above — not report data)
+   is still written, the user just has to switch to Reports manually to see
+   it applied. */
 export default function ProjectsPage({ darkMode = false, conversations, setConversations, onNavigate = () => {} }) {
   const { user, approvedUsers, canCreate, canEdit, canDelete } = useAuth();
   const canCreateProjects = canCreate("Projects");
