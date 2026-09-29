@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useEffect, useCallback } from "rea
 import { ensurePushSubscribed, clearPushSubscription } from "./pushSubscription";
 import { configureReportsApi } from "./pages/reportsApi.js";
 import { API_ROOT } from "./apiConfig.js";
+import { hydrateFlags, flushFlags, clearLocalFlags } from "./userFlags.js";
 
 const AuthContext = createContext(null);
 
@@ -638,6 +639,7 @@ export function AuthProvider({ children }) {
       }
       try {
         const me = await apiFetch("/me/");
+        await hydrateFlags({ kind: "staff", ownerId: me.id }); // saved per-user flags (never throws, times out fast)
         setUser(me);
         if (me.role === "admin") await refreshUsers();
         await refreshApprovedUsers();
@@ -754,6 +756,7 @@ export function AuthProvider({ children }) {
         body: JSON.stringify({ name, email, password, company, department }),
       });
       localStorage.setItem(TOKEN_KEY, data.token);
+      await hydrateFlags({ kind: "staff", ownerId: data.user?.id });
       setUser(data.user);
       ensurePushSubscribed(); // fire-and-forget — asks for notification permission so calls can still ring this device later
       return { success: true, user: data.user };
@@ -791,6 +794,7 @@ export function AuthProvider({ children }) {
         body: JSON.stringify({ email, password }),
       });
       localStorage.setItem(TOKEN_KEY, data.token);
+      await hydrateFlags({ kind: "staff", ownerId: data.user?.id });
       setUser(data.user);
       ensurePushSubscribed(); // fire-and-forget
       if (data.user.role === "admin") await refreshUsers();
@@ -812,6 +816,7 @@ export function AuthProvider({ children }) {
         body: JSON.stringify({ access_token: accessToken }),
       });
       localStorage.setItem(TOKEN_KEY, data.token);
+      await hydrateFlags({ kind: "staff", ownerId: data.user?.id });
       setUser(data.user);
       ensurePushSubscribed(); // fire-and-forget
       if (data.user.role === "admin") await refreshUsers();
@@ -849,12 +854,14 @@ export function AuthProvider({ children }) {
     // server, so unsubscribing afterwards always came back 401 and the
     // server-side push subscription row was never removed.
     await clearPushSubscription(); // this device stops receiving call pushes
+    await flushFlags(); // send any pending flag change while the token is still valid
     try {
       await apiFetch("/logout/", { method: "POST" });
     } catch {
       // even if the network call fails, still clear the local session below
     }
     localStorage.removeItem(TOKEN_KEY);
+    clearLocalFlags("staff"); // next person on this browser must not inherit these flags
     setUser(null);
     setUsers([]);
   }

@@ -46,6 +46,7 @@ import { sendMessage as apiSendMessage } from "../messagesApi.js";
 // never called the backend with it. See syncModuleStatusToClientsStorage.
 import * as clientsApi from "../api/clientsApi.js";
 import { API_ROOT } from "../apiConfig.js";
+import { FLAG_KEYS, syncFlag } from "../userFlags.js";
 
 /* ======================================================================
    BACKEND API (tasks app — see hopenix-backend/tasks/)
@@ -447,43 +448,26 @@ function isUrl(str) {
 /* ----------------------------------------------------------------------
    SIDEBAR "NEW ASSIGNMENT" NOTIFICATION
 
-   Whenever a task is created/edited so that someone new is now assigned
-   to it, we flag that person's name here. A Sidebar/Nav component (not
-   part of this file) can read this same key on mount and whenever the
-   "tasks:assignment" window event fires, and show a red dot on the Tasks
-   nav item for exactly the users included here. The flag for the current
-   user is cleared as soon as they land on this page (see the effect in
-   the main component), since opening Tasks counts as "seen".
----------------------------------------------------------------------- */
-const TASK_NOTIFY_STORAGE_KEY = "sidebar_task_notifications_v1";
+   The red dot on the Tasks nav item is no longer a name -> true flag written
+   into this browser's localStorage (that only worked when the assignee used
+   the SAME browser as whoever assigned the task). Dashboard.jsx now derives
+   it from the real tasks on the server plus a per-user "seen" flag (see
+   taskNotifications.js), so it follows the account across devices.
 
+   flagTaskNotification() is kept only so existing call sites don't change:
+   it fires the "tasks:assignment" event, which makes the Dashboard re-check
+   right away in this tab. Marking tasks as seen on opening the page is done
+   by Dashboard too, so clearTaskNotification() has nothing left to do.
+---------------------------------------------------------------------- */
 function flagTaskNotification(names) {
   try {
-    const raw = localStorage.getItem(TASK_NOTIFY_STORAGE_KEY);
-    const flags = raw ? JSON.parse(raw) : {};
-    names.forEach((n) => {
-      if (n) flags[n] = true;
-    });
-    localStorage.setItem(TASK_NOTIFY_STORAGE_KEY, JSON.stringify(flags));
     window.dispatchEvent(new CustomEvent("tasks:assignment", { detail: { names } }));
   } catch {
-    // storage unavailable — the red dot just won't show this session
+    // nothing to do — the next poll / window focus picks the new task up
   }
 }
 
-function clearTaskNotification(name) {
-  try {
-    const raw = localStorage.getItem(TASK_NOTIFY_STORAGE_KEY);
-    if (!raw) return;
-    const flags = JSON.parse(raw);
-    if (!flags[name]) return;
-    delete flags[name];
-    localStorage.setItem(TASK_NOTIFY_STORAGE_KEY, JSON.stringify(flags));
-    window.dispatchEvent(new CustomEvent("tasks:assignment", { detail: { names: [] } }));
-  } catch {
-    // storage unavailable — nothing to clear
-  }
-}
+function clearTaskNotification() {}
 
 /* ----------------------------------------------------------------------
    TASK ASSIGNMENT -> MESSAGES
@@ -510,7 +494,7 @@ function clearTaskNotification(name) {
 // so it was wiped on every page visit / reload / remount and the very same
 // task was messaged to the assignee all over again each time. It is now
 // persisted in localStorage so one real event = one message.
-const NOTIFIED_AUTO_KEYS_STORAGE = "taskspage_notified_auto_keys_v1";
+const NOTIFIED_AUTO_KEYS_STORAGE = FLAG_KEYS.taskAutoNotified; // synced per user via /api/flags/ (userFlags.js)
 function loadNotifiedAutoKeys() {
   try {
     const raw = localStorage.getItem(NOTIFIED_AUTO_KEYS_STORAGE);
@@ -522,7 +506,8 @@ function loadNotifiedAutoKeys() {
 }
 function saveNotifiedAutoKeys(set) {
   try {
-    localStorage.setItem(NOTIFIED_AUTO_KEYS_STORAGE, JSON.stringify(Array.from(set).slice(-1000)));
+    localStorage.setItem(NOTIFIED_AUTO_KEYS_STORAGE, JSON.stringify(Array.from(set).slice(-400)));
+    syncFlag(NOTIFIED_AUTO_KEYS_STORAGE);
   } catch {
     /* storage full / blocked — in-memory set still protects this session */
   }

@@ -28,6 +28,11 @@ import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
 // didn't correspond to anything real. Now sourced from the same backend
 // ProjectsPage.jsx itself uses.
 import { listProjects } from "../projectsApi.js";
+// Real Clients list (dashboard.Client) — so the "Company" field on the
+// Add/Edit form is picked from companies that actually exist in the
+// system (ClientsPage.jsx), instead of a free-text field anyone could
+// type anything into.
+import { listClients } from "../api/clientsApi.js";
 
 /* ------------------------------------------------------------------ */
 /*  Real backend wiring — Django REST + Postgres (dashboard.Income)   */
@@ -149,7 +154,7 @@ function Modal({ title, onClose, children, theme, maxWidth = "max-w-lg" }) {
 /* ------------------------------------------------------------------ */
 /*  Add / Edit form — top-level component so keystrokes never reset   */
 /* ------------------------------------------------------------------ */
-function IncomeFormModal({ theme, initialEntry, projectOptions, onClose, onSubmit }) {
+function IncomeFormModal({ theme, initialEntry, companies, realProjects, onClose, onSubmit }) {
   const isEdit = !!initialEntry;
   const [form, setForm] = useState(() => ({
     date: initialEntry ? initialEntry.sortDate : todayIso(),
@@ -164,6 +169,48 @@ function IncomeFormModal({ theme, initialEntry, projectOptions, onClose, onSubmi
 
   function update(field, value) {
     setForm((f) => ({ ...f, [field]: value }));
+  }
+
+  // Company dropdown options — real dashboard.Client rows, so only a
+  // company that actually exists in the system can be picked. The
+  // entry's current client (e.g. an older free-text value) is kept as
+  // an extra option too, so editing it doesn't wipe/hide it.
+  const companyNames = useMemo(() => {
+    const real = (companies || []).map((c) => c.name).filter(Boolean);
+    return Array.from(new Set([...real, ...(form.client ? [form.client] : [])]));
+  }, [companies, form.client]);
+
+  // Project dropdown — narrowed down to the real projects.Project rows
+  // that belong to the currently-selected Company. Projects with no
+  // client on file (project_type = "company") stay visible for any
+  // company selection, so internal/company-wide projects don't get
+  // hidden just because they're not tied to one client.
+  const projectNamesForCompany = useMemo(() => {
+    const list = realProjects || [];
+    const matching = list.filter((p) => {
+      if (!form.client) return true;
+      if (!p.client_name) return true; // company-wide project, always offered
+      return p.client_name.toLowerCase() === form.client.toLowerCase();
+    });
+    const names = matching.map((p) => p.name).filter(Boolean);
+    // Keep the entry's current project selectable even if it no longer
+    // matches (older data / project renamed), so editing doesn't clear it.
+    return Array.from(new Set([...names, ...(form.project ? [form.project] : [])]));
+  }, [realProjects, form.client, form.project]);
+
+  // If the company changes and the previously-picked project no longer
+  // belongs to it, clear the project so a mismatched pair can't be saved.
+  function updateClient(value) {
+    setForm((f) => {
+      const stillValid =
+        !f.project ||
+        (realProjects || []).some(
+          (p) =>
+            p.name === f.project &&
+            (!p.client_name || p.client_name.toLowerCase() === value.toLowerCase())
+        );
+      return { ...f, client: value, project: stillValid ? f.project : "" };
+    });
   }
 
   function handleSubmit(ev) {
@@ -209,24 +256,27 @@ function IncomeFormModal({ theme, initialEntry, projectOptions, onClose, onSubmi
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <label className={labelCls}>Project</label>
-            <input
-              list="income-project-options"
-              type="text"
-              value={form.project}
-              onChange={(e) => update("project", e.target.value)}
-              placeholder="e.g. CRM System"
-              className={inputCls}
-            />
-            <datalist id="income-project-options">
-              {projectOptions.map((p) => (
-                <option key={p} value={p} />
+            <label className={labelCls}>Company</label>
+            <select value={form.client} onChange={(e) => updateClient(e.target.value)} className={inputCls}>
+              <option value="">Select company…</option>
+              {companyNames.map((c) => (
+                <option key={c} value={c}>{c}</option>
               ))}
-            </datalist>
+            </select>
           </div>
           <div>
-            <label className={labelCls}>Client</label>
-            <input type="text" value={form.client} onChange={(e) => update("client", e.target.value)} placeholder="e.g. Global Solutions" className={inputCls} />
+            <label className={labelCls}>Project</label>
+            <select
+              value={form.project}
+              onChange={(e) => update("project", e.target.value)}
+              className={inputCls}
+              disabled={!form.client}
+            >
+              <option value="">{form.client ? "Select project…" : "Select a company first"}</option>
+              {projectNamesForCompany.map((p) => (
+                <option key={p} value={p}>{p}</option>
+              ))}
+            </select>
           </div>
         </div>
 
@@ -323,11 +373,15 @@ export default function IncomePage({ darkMode = false }) {
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [viewAllModal, setViewAllModal] = useState(null); // "project" | "recent" | null
   const [toast, setToast] = useState(null);
-  // Real project names (projects.Project), for the "Project" dropdown in
-  // the add/edit form and the filter bar — null while loading/on error,
-  // in which case the dropdown just falls back to names already used by
-  // existing income entries (no more hardcoded demo project names).
-  const [realProjectNames, setRealProjectNames] = useState(null);
+  // Real projects (projects.Project) — kept as full objects (not just
+  // names) so the add/edit form can narrow the Project dropdown down to
+  // whichever Company is picked (project.client_name). null while
+  // loading/on error, in which case the dropdown just falls back to
+  // names already used by existing income entries.
+  const [realProjects, setRealProjects] = useState(null);
+  // Real companies (dashboard.Client) — so "Company" on the add/edit
+  // form only offers companies that actually exist in the system.
+  const [companies, setCompanies] = useState([]);
 
   const tableRef = useRef(null);
   const toastTimer = useRef(null);
@@ -338,13 +392,26 @@ export default function IncomePage({ darkMode = false }) {
     listProjects()
       .then((rows) => {
         if (cancelled) return;
-        const names = (Array.isArray(rows) ? rows : rows?.results || [])
-          .map((p) => p.name)
-          .filter(Boolean);
-        setRealProjectNames(names);
+        setRealProjects(Array.isArray(rows) ? rows : rows?.results || []);
       })
       .catch((err) => {
         console.error("Projects fetch failed, project dropdown will only show names already in use:", err);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  /* ---------------- load real companies, for the Company dropdown ----- */
+  useEffect(() => {
+    let cancelled = false;
+    listClients()
+      .then((rows) => {
+        if (cancelled) return;
+        setCompanies(Array.isArray(rows) ? rows : rows?.results || []);
+      })
+      .catch((err) => {
+        console.error("Clients fetch failed, Company dropdown will be empty:", err);
       });
     return () => {
       cancelled = true;
@@ -461,8 +528,9 @@ export default function IncomePage({ darkMode = false }) {
 
   const projectOptions = useMemo(() => {
     const fromEntries = entries ? entries.map((e) => e.project) : [];
-    return Array.from(new Set([...(realProjectNames || []), ...fromEntries])).filter(Boolean);
-  }, [entries, realProjectNames]);
+    const realNames = (realProjects || []).map((p) => p.name);
+    return Array.from(new Set([...realNames, ...fromEntries])).filter(Boolean);
+  }, [entries, realProjects]);
 
   const projectBreakdown = useMemo(() => {
     if (!entries) return [];
@@ -1254,7 +1322,8 @@ export default function IncomePage({ darkMode = false }) {
           key={editEntry ? editEntry.id : "new"}
           theme={theme}
           initialEntry={editEntry}
-          projectOptions={projectOptions}
+          companies={companies}
+          realProjects={realProjects}
           onClose={() => {
             setFormOpen(false);
             setEditEntry(null);

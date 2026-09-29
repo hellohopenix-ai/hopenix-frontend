@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import ClientBirthdayCelebration from "../ClientBirthdayCelebration.jsx";
 import { getPendingClientBirthdayMessages, markBirthdayMessageDelivered } from "../birthdayMessageDelivery.js";
+import { FLAG_KEYS, syncFlag, hydrateFlags, flushFlags, clearLocalFlags } from "../userFlags.js";
 import {
   LogOut,
   Lock,
@@ -122,7 +123,7 @@ function setCurrentSession(token, clientId) {
    dot should show on that nav item. Opening the matching tab marks the
    current count as seen, so the dot clears until something NEW happens.
 ---------------------------------------------------------------- */
-const SEEN_ACTIVITY_STORAGE_KEY = "clientportal_seen_activity_v1";
+const SEEN_ACTIVITY_STORAGE_KEY = FLAG_KEYS.portalSeenActivity; // synced per account via /api/flags/ (userFlags.js)
 const BILLING_ACTIVITY_RE = /invoice|payment|milestone|paid|submitted|balance|billing/i;
 
 function categorizeActivity(text) {
@@ -148,6 +149,7 @@ function markActivitySeen(clientId, section, count) {
     const all = loadSeenActivity();
     const forClient = { ...(all[clientId] || {}), [section]: count };
     localStorage.setItem(SEEN_ACTIVITY_STORAGE_KEY, JSON.stringify({ ...all, [clientId]: forClient }));
+    syncFlag(SEEN_ACTIVITY_STORAGE_KEY, "portal");
   } catch {
     // best-effort only — the dot just won't stay cleared across a refresh
   }
@@ -3479,6 +3481,17 @@ export default function ClientPortal() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
+  // Pull this account's saved flags (seen-activity dots, birthday popup
+  // dismissed, ...) from the server once the client is known, then bump a
+  // counter so the dots re-evaluate against the merged data.
+  const [, setFlagsVersion] = useState(0);
+  const hydratedForRef = useRef(null);
+  useEffect(() => {
+    if (!token || !client?.id || hydratedForRef.current === `${token}:${client.id}`) return;
+    hydratedForRef.current = `${token}:${client.id}`;
+    hydrateFlags({ kind: "portal", ownerId: client.id }).then(() => setFlagsVersion((v) => v + 1));
+  }, [token, client?.id]);
+
   // Any queued "it's this client's birthday today" entry (written by
   // ClientBirthdayCelebration.jsx below) just needs marking delivered
   // so the celebration doesn't replay — it isn't tied to the server
@@ -3486,7 +3499,7 @@ export default function ClientPortal() {
   useEffect(() => {
     if (!client) return;
     const pending = getPendingClientBirthdayMessages().filter((m) => m.userId === client.id);
-    pending.forEach((msg) => markBirthdayMessageDelivered(msg.userId, msg.dateKey));
+    pending.forEach((msg) => markBirthdayMessageDelivered(msg.userId, msg.dateKey, "client"));
   }, [client]);
 
   const handleLogin = (newToken, clientData) => {
@@ -3496,7 +3509,10 @@ export default function ClientPortal() {
     setLoading(false);
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await flushFlags(); // must run before portalApi.logout() revokes the token
+    clearLocalFlags("portal");
+    hydratedForRef.current = null;
     portalApi.logout();
     setCurrentSession(null, null);
     setToken(null);

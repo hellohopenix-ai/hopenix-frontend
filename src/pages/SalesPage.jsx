@@ -2,6 +2,12 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { API_BASE_URL as API_BASE } from "../apiConfig.js";
+// Real Companies (dashboard.Client) + Projects (projects.Project) — so
+// the Add/Edit Sale form only offers a client/project that actually
+// exists in the system, and picking a company narrows the project list
+// down to that company's own real projects.
+import { listClients } from "../api/clientsApi.js";
+import { listProjects } from "../projectsApi.js";
 import {
   ChevronDown,
   ChevronLeft,
@@ -285,6 +291,63 @@ export default function SalesPage({ darkMode = false }) {
 
   const [openMenuId, setOpenMenuId] = useState(null);
   const [showClientsModal, setShowClientsModal] = useState(false);
+
+  // Real companies + projects, for the Add/Edit form's Company/Project
+  // dropdowns (see companyNames / projectNamesForCompany below).
+  const [realCompanies, setRealCompanies] = useState([]);
+  const [realProjects, setRealProjects] = useState([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    listClients()
+      .then((rows) => {
+        if (!cancelled) setRealCompanies(Array.isArray(rows) ? rows : rows?.results || []);
+      })
+      .catch((err) => console.error("Clients fetch failed, Company dropdown will be empty:", err));
+    listProjects()
+      .then((rows) => {
+        if (!cancelled) setRealProjects(Array.isArray(rows) ? rows : rows?.results || []);
+      })
+      .catch((err) => console.error("Projects fetch failed, Project dropdown will fall back to existing sales:", err));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Company dropdown options for the form — real client names, plus the
+  // form's current value (so editing an older free-text entry doesn't
+  // hide/clear it).
+  const companyNames = useMemo(() => {
+    const real = realCompanies.map((c) => c.name).filter(Boolean);
+    return Array.from(new Set([...real, ...(form.client ? [form.client] : [])]));
+  }, [realCompanies, form.client]);
+
+  // Project dropdown options for the form — real projects belonging to
+  // the selected company (or company-wide projects with no client),
+  // plus the form's current value.
+  const projectNamesForCompany = useMemo(() => {
+    const matching = realProjects.filter((p) => {
+      if (!form.client) return true;
+      if (!p.client_name) return true;
+      return p.client_name.toLowerCase() === form.client.toLowerCase();
+    });
+    const names = matching.map((p) => p.name).filter(Boolean);
+    return Array.from(new Set([...names, ...(form.project ? [form.project] : [])]));
+  }, [realProjects, form.client, form.project]);
+
+  // Changing the company clears a previously-picked project that no
+  // longer belongs to it, so a mismatched client/project pair can't be
+  // saved together.
+  function updateFormClient(value) {
+    setForm((f) => {
+      const stillValid =
+        !f.project ||
+        realProjects.some(
+          (p) => p.name === f.project && (!p.client_name || p.client_name.toLowerCase() === value.toLowerCase())
+        );
+      return { ...f, client: value, project: stillValid ? f.project : "" };
+    });
+  }
 
   const card = darkMode ? "bg-slate-900 border border-slate-800" : "bg-white";
   const cardText = darkMode ? "text-slate-200" : "text-slate-800";
@@ -952,32 +1015,33 @@ export default function SalesPage({ darkMode = false }) {
               )}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className={`text-[11px] font-medium ${mutedText}`}>Client</label>
-                  <input
+                  <label className={`text-[11px] font-medium ${mutedText}`}>Client / Company</label>
+                  <select
                     required
                     value={form.client}
-                    onChange={(e) => setForm({ ...form, client: e.target.value })}
-                    placeholder="e.g. Tech Solutions"
-                    list="client-options"
+                    onChange={(e) => updateFormClient(e.target.value)}
                     className={`mt-1 w-full rounded-lg px-3 py-2 text-xs outline-none border ${darkMode ? "bg-slate-800 border-slate-700 text-slate-200" : "bg-slate-50 border-slate-200 text-slate-700"}`}
-                  />
-                  <datalist id="client-options">
-                    {clientOptions.filter((c) => c !== "All Clients").map((c) => <option key={c} value={c} />)}
-                  </datalist>
+                  >
+                    <option value="">Select company…</option>
+                    {companyNames.map((c) => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
                 </div>
                 <div>
                   <label className={`text-[11px] font-medium ${mutedText}`}>Project / Service</label>
-                  <input
+                  <select
                     required
                     value={form.project}
                     onChange={(e) => setForm({ ...form, project: e.target.value })}
-                    placeholder="e.g. E-commerce Website"
-                    list="project-options"
+                    disabled={!form.client}
                     className={`mt-1 w-full rounded-lg px-3 py-2 text-xs outline-none border ${darkMode ? "bg-slate-800 border-slate-700 text-slate-200" : "bg-slate-50 border-slate-200 text-slate-700"}`}
-                  />
-                  <datalist id="project-options">
-                    {projectOptions.filter((p) => p !== "All Projects").map((p) => <option key={p} value={p} />)}
-                  </datalist>
+                  >
+                    <option value="">{form.client ? "Select project…" : "Select a company first"}</option>
+                    {projectNamesForCompany.map((p) => (
+                      <option key={p} value={p}>{p}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3">

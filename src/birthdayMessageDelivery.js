@@ -10,6 +10,8 @@
    delivered so it's never sent twice.
    =========================================================================== */
 
+import { FLAG_KEYS, syncFlag } from "./userFlags.js";
+
 /** Today's date as YYYY-MM-DD in the person's LOCAL timezone.
  *  FIX: this used new Date().toISOString() (UTC) everywhere — in Pakistan
  *  (UTC+5) that still says "yesterday" between midnight and 5 AM, so a
@@ -30,7 +32,7 @@ function localTodayKey() {
  *  though the person already closed it once today. Keyed by
  *  audience+id+today's date, so it naturally shows again on the next
  *  actual birthday next year without any cleanup needed. */
-const DISMISSED_CELEBRATIONS_KEY = "hopenix_birthday_celebration_dismissed";
+const DISMISSED_CELEBRATIONS_KEY = FLAG_KEYS.celebrationDismissed; // synced per user via /api/flags/
 
 function readDismissedCelebrations() {
   try {
@@ -42,9 +44,16 @@ function readDismissedCelebrations() {
   }
 }
 
-function writeDismissedCelebrations(obj) {
+function writeDismissedCelebrations(obj, audience) {
   try {
+    // drop entries from earlier days: they can never match again and would
+    // otherwise grow the synced flag forever
+    const suffix = `:${localTodayKey()}`;
+    Object.keys(obj).forEach((k) => {
+      if (!k.endsWith(suffix)) delete obj[k];
+    });
     localStorage.setItem(DISMISSED_CELEBRATIONS_KEY, JSON.stringify(obj));
+    syncFlag(DISMISSED_CELEBRATIONS_KEY, audience === "client" ? "portal" : "staff");
   } catch {
     // localStorage unavailable — safe to ignore, best-effort only
   }
@@ -64,10 +73,10 @@ export function markCelebrationDismissedToday(audience, id) {
   if (id == null) return;
   const map = readDismissedCelebrations();
   map[celebrationDismissKey(audience, id)] = true;
-  writeDismissedCelebrations(map);
+  writeDismissedCelebrations(map, audience);
 }
 
-const PENDING_MESSAGES_KEY = "hopenix_pending_birthday_messages";
+const PENDING_MESSAGES_KEY = FLAG_KEYS.pendingBirthday; // synced per user via /api/flags/
 
 export function isBirthdayToday(dateValue) {
   if (!dateValue) return false;
@@ -98,9 +107,15 @@ function readQueue() {
   }
 }
 
-function writeQueue(list) {
+function writeQueue(list, audience) {
   try {
-    localStorage.setItem(PENDING_MESSAGES_KEY, JSON.stringify(list));
+    // delivered wishes older than a week are only history: prune so the
+    // synced flag stays small
+    const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const cutoffKey = `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, "0")}-${String(cutoff.getDate()).padStart(2, "0")}`;
+    const kept = list.filter((m) => !(m.delivered && String(m.dateKey) < cutoffKey));
+    localStorage.setItem(PENDING_MESSAGES_KEY, JSON.stringify(kept));
+    syncFlag(PENDING_MESSAGES_KEY, audience === "client" ? "portal" : "staff");
   } catch {
     // localStorage unavailable — safe to ignore, best-effort only
   }
@@ -125,7 +140,7 @@ export function queueEmployeeBirthdayMessage(user) {
       audience: "employee",
       delivered: false,
     });
-    writeQueue(list);
+    writeQueue(list, "employee");
   } catch {
     // safe ignore
   }
@@ -150,7 +165,7 @@ export function queueClientBirthdayMessage(client) {
       audience: "client",
       delivered: false,
     });
-    writeQueue(list);
+    writeQueue(list, "client");
   } catch {
     // safe ignore
   }
@@ -182,9 +197,9 @@ export function getPendingClientBirthdayMessages() {
 
 /** Call once a queued entry has actually been turned into a real message,
  *  so it isn't delivered again next time this page mounts. */
-export function markBirthdayMessageDelivered(userId, dateKey) {
+export function markBirthdayMessageDelivered(userId, dateKey, audience = "employee") {
   const list = readQueue().map((m) =>
     String(m.userId) === String(userId) && m.dateKey === dateKey ? { ...m, delivered: true } : m
   );
-  writeQueue(list);
+  writeQueue(list, audience);
 }

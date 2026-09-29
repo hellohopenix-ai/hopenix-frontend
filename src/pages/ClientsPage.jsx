@@ -7,6 +7,7 @@ import { useAuth, getRoleCategory } from "../AuthContext.jsx";
 // until Steps 3-4 — see MIGRATIONS.md / GUIDE.md for the full staged plan.
 import * as clientsApi from "../api/clientsApi.js";
 import { sendMessage as apiSendMessage } from "../messagesApi.js";
+import { FLAG_KEYS, syncFlag } from "../userFlags.js";
 import {
   Users2,
   Briefcase,
@@ -1608,7 +1609,7 @@ function genAttachmentId() {
    (taskspage_notified_auto_keys_v1 -> `client::<id>::<name>`) is
    recorded here too.
 ---------------------------------------------------------------------- */
-const NOTIFIED_AUTO_KEYS_STORAGE = "taskspage_notified_auto_keys_v1";
+const NOTIFIED_AUTO_KEYS_STORAGE = FLAG_KEYS.taskAutoNotified; // synced per user via /api/flags/
 
 function markClientAssignmentNotified(clientId, managerName) {
   try {
@@ -1616,7 +1617,8 @@ function markClientAssignmentNotified(clientId, managerName) {
     const arr = raw ? JSON.parse(raw) : [];
     const set = new Set(Array.isArray(arr) ? arr : []);
     set.add(`client::${clientId}::${(managerName || "").trim().toLowerCase()}`);
-    localStorage.setItem(NOTIFIED_AUTO_KEYS_STORAGE, JSON.stringify(Array.from(set).slice(-1000)));
+    localStorage.setItem(NOTIFIED_AUTO_KEYS_STORAGE, JSON.stringify(Array.from(set).slice(-400)));
+    syncFlag(NOTIFIED_AUTO_KEYS_STORAGE);
   } catch {
     /* storage unavailable — worst case TasksPage sends its own copy */
   }
