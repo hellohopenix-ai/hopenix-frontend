@@ -746,118 +746,31 @@ const TASKS_STORAGE_KEY = "taskspage_tasks_v1";
    3-4 identical tasks here, each with its own duplicate message):
    the client-link fields below (clientId / moduleTaskKey / ...) are what
    BOTH sync functions use to decide "this client/module already has a
-   task, skip it". They only ever existed in this page's own React state
-   though — sanitizeTaskForBackend strips most of them before POSTing, and
-   the backend serializer doesn't know about the rest (moduleTaskKey,
-   moduleProjectName, fromClientModule, ...), so every row that comes back
-   from the API has them missing. Since both the create round-trip and the
-   initial GET /tasks/ used to overwrite the local task with that
-   stripped-down row wholesale, the link was lost the moment it was saved
-   — the very next sync pass saw the client as "not linked yet" and
-   created (and persisted, and notified) another copy, over and over.
-   Keeping a small id -> link-metadata map on the side and re-attaching it
-   after every backend round-trip is what makes the de-dupe checks
-   actually hold across saves and reloads. */
-const TASK_LINK_META_STORAGE_KEY = "taskspage_task_link_meta_v1";
-const TASK_LINK_META_FIELDS = [
-  "clientId",
-  "clientName",
-  "moduleTaskKey",
-  "moduleProjectName",
-  "moduleName",
-  "moduleId",
-  "subModuleId",
-  "requiresLink",
-  "fromClientModule",
-  "fromClientAssignment",
-];
+   task, skip it". They used to only ever exist in this page's own React
+   state — sanitizeTaskForBackend stripped most of them before POSTing,
+   and the backend serializer didn't know about the rest — so every row
+   that came back from the API had them missing, and the very next sync
+   pass saw the client as "not linked yet" and created another copy.
 
-function readTaskLinkMeta() {
-  try {
-    const raw = localStorage.getItem(TASK_LINK_META_STORAGE_KEY);
-    const parsed = raw ? JSON.parse(raw) : null;
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
-  } catch {
-    return {};
-  }
-}
+   FIXED PROPERLY (tasks migration 0004 + TaskSerializer): the backend
+   Task model now has real columns for every one of these fields
+   (client, module_task_key, module_project_name, client_module_id,
+   sub_module_id, from_client_module, from_client_assignment, ...) and
+   the serializer round-trips all of them under their camelCase names.
+   sanitizeTaskForBackend() below sends them on create, and GET /tasks/
+   returns them on every fetch — for every browser/device, not just the
+   one that created the task. That's what actually fixes the duplicate-
+   task bug and the "vanishes on the employee's own browser" bug this
+   comment used to describe.
 
-function writeTaskLinkMeta(map) {
-  try {
-    localStorage.setItem(TASK_LINK_META_STORAGE_KEY, JSON.stringify(map));
-  } catch {
-    /* quota/private-mode — the in-memory copy still works for this session */
-  }
-}
-
-function pickTaskLinkMeta(task) {
-  const meta = {};
-  TASK_LINK_META_FIELDS.forEach((f) => {
-    if (task && task[f] !== undefined && task[f] !== null && task[f] !== "") meta[f] = task[f];
-  });
-  return meta;
-}
-
-// Remembers the client-link fields of every task that has any, keyed by
-// task id, so they can be put back after the backend hands the row back
-// without them.
-function rememberTaskLinkMeta(tasks) {
-  const map = readTaskLinkMeta();
-  let changed = false;
-  (tasks || []).forEach((t) => {
-    if (!t || t.id == null) return;
-    const meta = pickTaskLinkMeta(t);
-    if (!meta.moduleTaskKey && !meta.fromClientAssignment && meta.clientId == null) return;
-    const key = String(t.id);
-    const prev = map[key];
-    const next = { ...(prev || {}), ...meta };
-    if (!prev || JSON.stringify(prev) !== JSON.stringify(next)) {
-      map[key] = next;
-      changed = true;
-    }
-  });
-  if (changed) writeTaskLinkMeta(map);
-}
-
-// The other half: re-attaches whatever the backend dropped. Only fills in
-// fields the incoming row doesn't already carry, so real server data
-// always wins over the cached copy.
-function hydrateTaskLinkMeta(list) {
-  const map = readTaskLinkMeta();
-  return (list || []).map((t) => {
-    const meta = map[String(t?.id)];
-    if (!meta) return t;
-    const merged = { ...t };
-    TASK_LINK_META_FIELDS.forEach((f) => {
-      if (merged[f] === undefined || merged[f] === null || merged[f] === "") {
-        if (meta[f] !== undefined) merged[f] = meta[f];
-      }
-    });
-    return merged;
-  });
-}
-
-// Used when a locally-created task gets its real backend id: the saved row
-// keeps the server's id/fields, but every client-link field is carried
-// over from the local copy, and the metadata map is re-keyed to the new id
-// so the link survives the next reload too.
-function mergeSavedTask(local, saved) {
-  if (!saved) return local;
-  const merged = { ...local, ...saved };
-  TASK_LINK_META_FIELDS.forEach((f) => {
-    if (saved[f] === undefined || saved[f] === null || saved[f] === "") {
-      if (local[f] !== undefined) merged[f] = local[f];
-    }
-  });
-  if (saved.id != null && local.id != null && String(saved.id) !== String(local.id)) {
-    const map = readTaskLinkMeta();
-    delete map[String(local.id)];
-    const meta = pickTaskLinkMeta(merged);
-    if (meta.moduleTaskKey || meta.fromClientAssignment || meta.clientId != null) map[String(saved.id)] = meta;
-    writeTaskLinkMeta(map);
-  }
-  return merged;
-}
+   There used to also be a small localStorage safety-net (id -> link-
+   metadata map, taskspage_task_link_meta_v1) re-attaching whatever the
+   backend dropped. It's been removed: the backend never drops these
+   fields any more, so the cache had nothing left to restore — and kept
+   was actually a latent risk (it could paper over a field the backend
+   had legitimately cleared, e.g. an intentionally-unlinked task, with a
+   stale locally-cached value). The backend response is now the single
+   source of truth for these fields. */
 
 // Fallback identity for an auto-generated task, used only when the proper
 // link fields are missing (old rows saved before the metadata map above
@@ -1228,11 +1141,12 @@ function loadClientsForTaskSync() {
 
 function syncClientAssignmentTasks(tasks, clients, approvedUsers) {
   const linkedClientIds = new Set(tasks.filter((t) => t.clientId).map((t) => t.clientId));
-  // Second, name-based safety net for rows whose clientId didn't survive a
-  // backend round-trip made before the link-metadata map existed (see
-  // TASK_LINK_META_STORAGE_KEY) — without it those older tasks read as
-  // "not linked" forever and this client gets a fresh duplicate on every
-  // single sync pass.
+  // Second, name-based safety net for a handful of legacy rows saved
+  // before the backend stored clientId at all — without it those old
+  // tasks read as "not linked" forever and this client gets a fresh
+  // duplicate on every single sync pass. New tasks always carry a real
+  // clientId straight from the backend, so this only matters for rows
+  // that pre-date that.
   const existingTitles = new Set(tasks.map((t) => (t.title || "").trim().toLowerCase()));
   let maxId = tasks.reduce((max, t) => Math.max(max, t.id), 1000);
   const createdTasks = [];
@@ -1700,16 +1614,14 @@ function persistAutoCreatedTasks(createdList, setTasks, onSettled) {
 
   persist
     .then((saved) => {
-      // FIX (duplicates): this used to be `saved[idx]` outright, which
-      // threw away clientId / moduleTaskKey / clientName — the exact
-      // fields both syncs use to recognise an already-created task — so
-      // the next pass happily created the same one again. mergeSavedTask
-      // keeps the backend's real id and data while carrying those links
-      // over (and re-keys the saved metadata to the new id).
+      // The backend response already carries the real id plus every
+      // client-link field (clientId, moduleTaskKey, clientName, ...) —
+      // see the FIX note near TASKS_STORAGE_KEY above — so it's safe to
+      // just take it as the new source of truth for this task.
       setTasks((list) =>
         list.map((t) => {
           const idx = createdList.findIndex((c) => c.id === t.id);
-          return idx !== -1 && saved[idx] ? mergeSavedTask(t, saved[idx]) : t;
+          return idx !== -1 && saved[idx] ? { ...t, ...saved[idx] } : t;
         })
       );
     })
@@ -2702,12 +2614,11 @@ export default function TasksPage({ darkMode = false, conversations = [], setCon
     (async () => {
       try {
         const data = await tasksApiFetch("/tasks/");
-        // FIX (duplicates on every reload): the backend list doesn't carry
-        // moduleTaskKey / clientName / legacy string clientIds, so dropping
-        // it into state raw made every client-linked task look unlinked and
-        // both syncs re-created the whole set (with fresh messages) each
-        // time the page loaded. hydrateTaskLinkMeta puts those links back.
-        const list = hydrateTaskLinkMeta(Array.isArray(data) ? data : data?.results || []);
+        // The backend now returns moduleTaskKey / clientId / clientName /
+        // ... directly on every task (see the FIX note near
+        // TASKS_STORAGE_KEY above), so no local patching is needed here
+        // any more — both syncs can just read those fields off the list.
+        const list = Array.isArray(data) ? data : data?.results || [];
         if (!cancelled) {
           setTasks(list);
           saveTasksToStorage(list);
@@ -2896,11 +2807,6 @@ export default function TasksPage({ darkMode = false, conversations = [], setCon
   // page's own localStorage record.
   useEffect(() => {
     saveTasksToStorage(tasks);
-    // Keep the id -> client-link map current (see
-    // TASK_LINK_META_STORAGE_KEY) so the next backend fetch can restore
-    // whatever the API drops, instead of the syncs treating those rows as
-    // brand-new clients/modules and duplicating them.
-    rememberTaskLinkMeta(tasks);
     syncEmployeeTaskCounts(tasks);
   }, [tasks]);
 
@@ -3065,22 +2971,14 @@ export default function TasksPage({ darkMode = false, conversations = [], setCon
   // list has loaded.
   const deletedAutoTaskIdsRef = useRef(new Set());
   const cleanupDuplicateAutoTasks = () => {
-    // FIX ("user view mein assigned task dikh ke gayab ho jata hai"): the
-    // client-link metadata this cleanup depends on (see
-    // TASK_LINK_META_STORAGE_KEY) lives in ONE browser's localStorage —
-    // it's never shared across logins. On the employee's own browser that
-    // metadata was never written (they didn't create the task, an
-    // admin/manager did, on a different machine), so every client-linked
-    // task looks "unlinked" the moment it loads there. The fallback
-    // project+title matching this cleanup uses for exactly that situation
-    // could then mistake the employee's own real, correctly-assigned task
-    // for a duplicate of something else and DELETE it from the backend —
-    // which is exactly a "shows for a moment, then disappears" bug, and it
-    // deletes the task for every user, not just this one. Only a session
-    // that can actually manage client assignments (admin/manager) — and
-    // therefore is far more likely to have that local metadata cached —
-    // ever runs this destructive pass; a plain employee's session only
-    // ever reads and displays whatever the backend already has.
+    // The client-link fields this cleanup keys on (moduleTaskKey,
+    // clientId, ...) now come straight from the backend on every GET
+    // /tasks/ (see the FIX note near TASKS_STORAGE_KEY above), the same
+    // for every browser/device — so this no longer depends on anything
+    // being cached locally by whoever created the task. Still gated to
+    // admin/manager only, since it's a destructive pass (deletes rows on
+    // the backend for every user): a plain employee's session only ever
+    // reads and displays whatever the backend already has.
     if (!canSeeAllTasks) return;
     const removeIds = findDuplicateAutoTaskIds(tasksRef.current).filter(
       (id) => !deletedAutoTaskIdsRef.current.has(String(id))
@@ -4716,7 +4614,7 @@ export default function TasksPage({ darkMode = false, conversations = [], setCon
                 setTasks((list) =>
                   list.map((t) => {
                     const idx = createdList.findIndex((c) => c.id === t.id);
-                    return idx !== -1 && saved[idx] ? mergeSavedTask(t, saved[idx]) : t;
+                    return idx !== -1 && saved[idx] ? { ...t, ...saved[idx] } : t;
                   })
                 );
               })
