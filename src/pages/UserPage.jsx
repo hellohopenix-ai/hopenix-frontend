@@ -1041,11 +1041,24 @@ export default function UserPage({ darkMode = false }) {
   // generic updateUserProfile — no AuthContext changes needed. Unlike
   // Approve/Update Role, this doesn't close the modal, since an admin may
   // still want to review the rest of the profile after setting it.
-  const handleModalSalaryUpdate = (id, salary) => {
+  // FIX: updateUserProfile is async, so `ok` used to be a Promise (always
+  // truthy) and this always toasted "Salary updated." even when the backend
+  // rejected the save (e.g. the user hasn't completed their profile yet) —
+  // the salary then silently never reached any other device. Now awaited,
+  // so the toast reflects what was REALLY saved.
+  const handleModalSalaryUpdate = async (id, salary) => {
     const numeric = Number(salary);
     if (!Number.isFinite(numeric) || numeric < 0) return;
-    const ok = typeof updateUserProfile === "function" ? updateUserProfile(id, { salary: numeric }) : false;
-    showToast(ok ? "Salary updated." : "Could not save salary.", ok ? "success" : "error");
+    let ok = false;
+    try {
+      ok = typeof updateUserProfile === "function" ? (await updateUserProfile(id, { salary: numeric })) === true : false;
+    } catch {
+      ok = false;
+    }
+    showToast(
+      ok ? "Salary updated." : "Could not save salary. The user may not have completed their profile yet.",
+      ok ? "success" : "error"
+    );
   };
 
   // Opens the row action popup, positioned from the clicked button's own

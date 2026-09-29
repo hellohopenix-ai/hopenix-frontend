@@ -1557,21 +1557,31 @@ export default function EmployeesPage({ darkMode = false }) {
   const setEmployeeSalary = async (id, value) => {
     const num = Math.max(0, Math.round(Number(value) || 0));
     const emp = employees.find((e) => e.id === id);
+    const previousSalary = emp?.salary ?? null;
     setEmployees((list) =>
       list.map((e) => (e.id === id ? { ...e, salary: num } : e))
     );
+    // FIX: updateUserProfile() resolves to true/false (never a
+    // {success:false} object), so the old `result.success === false` check
+    // could never fire — a rejected save still toasted "salary updated"
+    // and the number only existed in this browser. Now a `false` result
+    // rolls the local value back and says so, so what you see is what is
+    // really stored (and therefore what every other device will see).
+    let saved = true;
     if (emp?.authId && typeof updateUserProfile === "function") {
-      // Same fix as handleAdd/handleEditSubmit — updateUserProfile() is
-      // async, so it must be awaited for the try/catch (and any
-      // {success:false} result) to actually mean anything.
       try {
-        const result = await updateUserProfile(emp.authId, { salary: num });
-        if (result && result.success === false) {
-          showToast(result.error || "Saved here, but couldn't update the linked account's salary.", "error");
-        }
+        saved = (await updateUserProfile(emp.authId, { salary: num })) === true;
       } catch {
-        // local salary update is already applied regardless
+        saved = false;
       }
+    }
+    if (!saved) {
+      setEmployees((list) =>
+        list.map((e) => (e.id === id ? { ...e, salary: previousSalary } : e))
+      );
+      if (detailsEmp?.id === id) setDetailsEmp({ ...detailsEmp, salary: previousSalary });
+      showToast("Couldn't save the salary — the employee may not have completed their profile yet.", "error");
+      return;
     }
     if (detailsEmp?.id === id) setDetailsEmp({ ...detailsEmp, salary: num });
     showToast(`${emp?.name || "Employee"}'s salary updated to ${fmtMoney(num)}.`, "success");

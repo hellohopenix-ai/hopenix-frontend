@@ -628,6 +628,117 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
+  /** FIX (access + salary set by admin never reached the user's own
+   *  device): role-permissions / module-permissions / access-override /
+   *  sub-access are admin-only endpoints and refreshUsers() (which loads
+   *  them) only runs for admin sessions, so every other user only ever saw
+   *  hard-coded defaults or stale localStorage. GET /my-access/ returns
+   *  just THIS user's own resolved access, so it works on any browser or
+   *  device. Never throws (a failure just keeps whatever is already
+   *  loaded). Admins are skipped — they always have full access. */
+  const applyMyAccess = useCallback(async (u) => {
+    if (!u || u.id == null) return;
+    const category = getRoleCategory(u.role);
+    if (category === "admin") return;
+    try {
+      const acc = await apiFetch("/my-access/");
+      if (!acc || typeof acc !== "object") return;
+      const uid = u.id;
+      const sameJson = (a, b) => {
+        try {
+          return JSON.stringify(a) === JSON.stringify(b);
+        } catch {
+          return false;
+        }
+      };
+
+      if (Array.isArray(acc.rolePages)) {
+        setRolePermissions((prev) =>
+          sameJson(prev[category], acc.rolePages) ? prev : { ...prev, [category]: acc.rolePages }
+        );
+      }
+
+      const moduleTable = {
+        ...buildModuleDefaults(DEFAULT_MODULE_PERMISSIONS[category] || DEFAULT_MODULE_PERMISSIONS.employee),
+        ...(acc.modules || {}),
+      };
+      setModulePermissions((prev) =>
+        sameJson(prev[category], moduleTable) ? prev : { ...prev, [category]: moduleTable }
+      );
+
+      setUserAccessOverrides((prev) => {
+        const next = { ...prev };
+        if (acc.override && acc.override.mode) {
+          if (sameJson(prev[uid], acc.override)) return prev;
+          next[uid] = acc.override;
+        } else {
+          if (!(uid in prev)) return prev;
+          delete next[uid];
+        }
+        return next;
+      });
+
+      setSubPageAccessOverrides((prev) => {
+        const sub = acc.subAccess && Object.keys(acc.subAccess).length ? acc.subAccess : null;
+        if (sub) {
+          if (sameJson(prev[uid], sub)) return prev;
+          return { ...prev, [uid]: sub };
+        }
+        if (!(uid in prev)) return prev;
+        const next = { ...prev };
+        delete next[uid];
+        return next;
+      });
+    } catch (err) {
+      console.error("Could not load your access from the backend:", err.message);
+    }
+  }, []);
+
+  // Keep a non-admin's own access (and their own profile data, e.g. the
+  // salary an admin sets) live: re-pull on an interval, when the tab
+  // regains focus/visibility and when the network comes back — so a change
+  // an admin makes on another device applies here without a re-login.
+  useEffect(() => {
+    if (!user?.id) return undefined;
+    if (getRoleCategory(user.role) === "admin") return undefined;
+    let cancelled = false;
+    let inFlight = false;
+    const uid = user.id;
+    const sync = async () => {
+      if (inFlight || cancelled) return;
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      inFlight = true;
+      try {
+        await applyMyAccess({ id: uid, role: user.role });
+        const me = await apiFetch("/me/").catch(() => null);
+        if (!cancelled && me && me.id === uid) {
+          setUser((prev) => {
+            if (!prev || prev.id !== uid) return prev;
+            const changed = Object.keys(me).some((k) => JSON.stringify(me[k]) !== JSON.stringify(prev[k]));
+            return changed ? { ...prev, ...me } : prev;
+          });
+        }
+      } finally {
+        inFlight = false;
+      }
+    };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") sync();
+    };
+    const timer = setInterval(sync, 10000);
+    window.addEventListener("focus", sync);
+    window.addEventListener("online", sync);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+      window.removeEventListener("focus", sync);
+      window.removeEventListener("online", sync);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, user?.role]);
+
   // Restore session on refresh using the saved token (real backend call,
   // not a localStorage lookup anymore).
   useEffect(() => {
@@ -640,6 +751,7 @@ export function AuthProvider({ children }) {
       try {
         const me = await apiFetch("/me/");
         await hydrateFlags({ kind: "staff", ownerId: me.id }); // saved per-user flags (never throws, times out fast)
+        await applyMyAccess(me); // own access first, so the right pages are allowed on the very first render
         setUser(me);
         if (me.role === "admin") await refreshUsers();
         await refreshApprovedUsers();
@@ -795,6 +907,7 @@ export function AuthProvider({ children }) {
       });
       localStorage.setItem(TOKEN_KEY, data.token);
       await hydrateFlags({ kind: "staff", ownerId: data.user?.id });
+      await applyMyAccess(data.user);
       setUser(data.user);
       ensurePushSubscribed(); // fire-and-forget
       if (data.user.role === "admin") await refreshUsers();
@@ -817,6 +930,7 @@ export function AuthProvider({ children }) {
       });
       localStorage.setItem(TOKEN_KEY, data.token);
       await hydrateFlags({ kind: "staff", ownerId: data.user?.id });
+      await applyMyAccess(data.user);
       setUser(data.user);
       ensurePushSubscribed(); // fire-and-forget
       if (data.user.role === "admin") await refreshUsers();
@@ -1700,7 +1814,12 @@ export function AuthProvider({ children }) {
     apiFetch(`/users/${id}/access-override/`, {
       method: "PUT",
       body: JSON.stringify({ mode: mode || "default", pages: Array.isArray(pages) ? pages : [] }),
-    }).catch((err) => console.error("Could not save user access override to backend:", err.message));
+    }).catch((err) => {
+      console.error("Could not save user access override to backend:", err.message);
+      // Re-sync from the server so the screen shows what is REALLY saved,
+      // instead of a change that only exists in this browser.
+      refreshAccessOverrides(users);
+    });
   }
 
   /** Admin action: read the individual sub-access override currently set
@@ -1744,7 +1863,10 @@ export function AuthProvider({ children }) {
     apiFetch(`/users/${id}/sub-access/${encodeURIComponent(pageName)}/`, {
       method: "PUT",
       body: JSON.stringify({ mode: mode === "full" ? "full" : "default" }),
-    }).catch((err) => console.error("Could not save sub-page access to backend:", err.message));
+    }).catch((err) => {
+      console.error("Could not save sub-page access to backend:", err.message);
+      refreshAccessOverrides(users);
+    });
   }
 
   /** True if a specific user id currently has the page-access override
