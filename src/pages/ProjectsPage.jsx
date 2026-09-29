@@ -39,6 +39,7 @@ import {
 } from "lucide-react";
 import { useAuth, getRoleCategory } from "../AuthContext.jsx";
 import * as projectsApi from "../projectsApi.js";
+import { useLiveRefresh, sameJson } from "../useLiveRefresh.js";
 import { listAllDaily, bulkDeleteDaily } from "./reportsApi.js";
 import * as messagesApi from "../messagesApi.js";
 import { idbPutMessageMedia } from "./MessagesPage.jsx";
@@ -1615,6 +1616,41 @@ export default function ProjectsPage({ darkMode = false, conversations, setConve
   const [openActionMenu, setOpenActionMenu] = useState(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
+
+  // FIX (ticked module reverted / never reached other devices): a module
+  // tick used to change local state only, so the live refresh below would
+  // pull the OLD status back from the server a few seconds later. These two
+  // refs let the refresh know a module save is in flight (or happened while
+  // it was fetching) so it throws that snapshot away instead of overwriting.
+  const moduleSavesPendingRef = useRef(0);
+  const moduleMutationSeqRef = useRef(0);
+
+  // FIX (project created/edited/assigned on one device never showed on
+  // another until a manual reload): the list above loads once on mount.
+  // Silently re-pull it every 15s / on focus / on reconnect. Skipped while
+  // the create/edit form is open (a multi-step save could otherwise be
+  // overwritten mid-way) and until the first real load has happened.
+  const approvedUsersLiveRef = useRef(approvedUsers);
+  approvedUsersLiveRef.current = approvedUsers;
+  useLiveRefresh(
+    async () => {
+      if (!projectsHydratedRef.current) return;
+      if (createOpen || editingId != null) return;
+      if (moduleSavesPendingRef.current > 0) return;
+      const seqBefore = moduleMutationSeqRef.current;
+      const data = await projectsApi.listProjects();
+      // A module was ticked while this request was in flight: the snapshot
+      // may not include it yet, so drop it (the next tick of the timer
+      // fetches a fresh one).
+      if (moduleSavesPendingRef.current > 0 || seqBefore !== moduleMutationSeqRef.current) return;
+      const mapped = (Array.isArray(data) ? data : data?.results || []).map((bp) =>
+        backendProjectToFrontend(bp, approvedUsersLiveRef.current)
+      );
+      setProjects((prev) => (sameJson(prev, mapped) ? prev : mapped));
+      saveStoredProjects(mapped);
+    },
+    { interval: 15000 }
+  );
   const [toasts, setToasts] = useState([]);
   const [fullDetailsId, setFullDetailsId] = useState(null);
   const [previewFile, setPreviewFile] = useState(null);
@@ -1826,34 +1862,70 @@ export default function ProjectsPage({ darkMode = false, conversations, setConve
     showToast(`Project marked as ${status}.`, "success");
   };
 
+  // FIX (module tick was local-only): saves ONE module's status to the
+  // backend right away (PATCH sends only `status`, so nothing else on the
+  // module or its task can be overwritten). If the server refuses, just
+  // that module goes back to what it showed before and a toast says why.
+  const persistModuleStatus = async (projectId, moduleId, nextStatus, prevStatus) => {
+    // Brand-new modules from the create/edit form have a temporary "m-..."
+    // id and are saved by that form's own Save button, not here.
+    if (typeof moduleId === "string" && moduleId.startsWith("m-")) return;
+    moduleSavesPendingRef.current += 1;
+    moduleMutationSeqRef.current += 1;
+    try {
+      await projectsApi.updateModule(projectId, moduleId, { status: nextStatus });
+    } catch (err) {
+      setProjects((list) =>
+        list.map((p) =>
+          p.id !== projectId
+            ? p
+            : {
+                ...p,
+                modules: (p.modules || []).map((m) =>
+                  m.id === moduleId && m.status === nextStatus ? { ...m, status: prevStatus } : m
+                ),
+              }
+        )
+      );
+      showToast(err.message || "Module status server par save nahi hua.", "error");
+    } finally {
+      moduleSavesPendingRef.current -= 1;
+      moduleMutationSeqRef.current += 1;
+    }
+  };
+
   // Modules progress is always derived live from each module's `status`
   // (see moduleStats) — nothing else needs to be recomputed here.
   // Checkbox click: straight toggle between Completed and Pending.
   const toggleModuleDone = (projectId, moduleId) => {
+    const current = (projects.find((p) => p.id === projectId)?.modules || []).find((m) => m.id === moduleId);
+    if (!current) return;
+    const prevStatus = current.status || "Pending";
+    const nextStatus = prevStatus === "Completed" ? "Pending" : "Completed";
     setProjects((list) =>
       list.map((p) => {
         if (p.id !== projectId) return p;
-        const modules = (p.modules || []).map((m) =>
-          m.id === moduleId ? { ...m, status: m.status === "Completed" ? "Pending" : "Completed" } : m
-        );
+        const modules = (p.modules || []).map((m) => (m.id === moduleId ? { ...m, status: nextStatus } : m));
         return { ...p, modules };
       })
     );
+    persistModuleStatus(projectId, moduleId, nextStatus, prevStatus);
   };
   // Status badge click: cycles Pending -> In Progress -> Completed -> Pending.
   const cycleModuleStatus = (projectId, moduleId) => {
+    const current = (projects.find((p) => p.id === projectId)?.modules || []).find((m) => m.id === moduleId);
+    if (!current) return;
+    const prevStatus = current.status || "Pending";
+    const idx = MODULE_STATUS_OPTIONS.indexOf(prevStatus);
+    const nextStatus = MODULE_STATUS_OPTIONS[(idx + 1) % MODULE_STATUS_OPTIONS.length];
     setProjects((list) =>
       list.map((p) => {
         if (p.id !== projectId) return p;
-        const modules = (p.modules || []).map((m) => {
-          if (m.id !== moduleId) return m;
-          const idx = MODULE_STATUS_OPTIONS.indexOf(m.status || "Pending");
-          const next = MODULE_STATUS_OPTIONS[(idx + 1) % MODULE_STATUS_OPTIONS.length];
-          return { ...m, status: next };
-        });
+        const modules = (p.modules || []).map((m) => (m.id === moduleId ? { ...m, status: nextStatus } : m));
         return { ...p, modules };
       })
     );
+    persistModuleStatus(projectId, moduleId, nextStatus, prevStatus);
   };
   // Attaches a real, downloadable file to one module (spec doc,
   // screenshot, deliverable, whatever the assignee needs to share) —
