@@ -1009,7 +1009,10 @@ function respond(command, context = {}) {
   if (c.includes("expense")) return 'To log an expense, tell me the amount — e.g. "add expense of 500 for petrol".';
   if (c.includes("income")) return 'To log income, tell me the amount — e.g. "add income of 500 from client x".';
   if (c.includes("profit")) return `For ${range}, your total profit is ${profitStat.value} (${profitStat.delta} vs the previous period).${placeholderNote}`;
-  if (c.includes("project") || c.includes("website")) return "Started a new project workspace for that client. Check Projects to add details.";
+  // Same honesty rule as expense/income above: the AI Assistant has no
+  // command that actually creates a project on the backend, so it must
+  // not claim one was started. Point to the real place to do it instead.
+  if (c.includes("project") || c.includes("website")) return "I can't create projects yet — head to the Projects page and use \"New Project\" to set one up.";
   if (c.includes("sales")) {
     const salesRows = context.liveSales || SALES_DATA;
     const first = salesRows[0];
