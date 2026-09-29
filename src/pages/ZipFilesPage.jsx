@@ -16,6 +16,7 @@ import {
   FolderKanban,
   Trash2,
   FileText,
+  Mail,
 } from "lucide-react";
 import { useAuth } from "../AuthContext.jsx";
 import { API_ROOT } from "../apiConfig.js";
@@ -105,6 +106,14 @@ export default function ZipFilesPage({ darkMode = false }) {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
 
+  // Email OTP step (comes AFTER the password step). otpStep=false -> password
+  // screen, otpStep=true -> "enter the code we emailed you" screen.
+  const [otpStep, setOtpStep] = useState(false);
+  const [otp, setOtp] = useState("");
+  const [otpBusy, setOtpBusy] = useState(false);
+  const [resendIn, setResendIn] = useState(0);
+  const [otpInfo, setOtpInfo] = useState("");
+
   const [zipFiles, setZipFiles] = useState([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
@@ -164,6 +173,35 @@ export default function ZipFilesPage({ darkMode = false }) {
     window.setTimeout(() => setToast(null), 3000);
   };
 
+  // Resend cooldown ticker (seconds).
+  useEffect(() => {
+    if (resendIn <= 0) return undefined;
+    const t = window.setTimeout(() => setResendIn((n) => n - 1), 1000);
+    return () => window.clearTimeout(t);
+  }, [resendIn]);
+
+  // "abc***@gmail.com" — so the screen can say where the code went.
+  const maskedEmail = (() => {
+    const em = user?.email || "";
+    const [name, domain] = em.split("@");
+    if (!name || !domain) return "your email";
+    return `${name.slice(0, 2)}${"*".repeat(Math.max(1, name.length - 2))}@${domain}`;
+  })();
+
+  // Emails a fresh 6-digit code to the logged-in user's own account email
+  // using the existing POST /api/auth/send-otp/ endpoint.
+  const sendOtp = async () => {
+    const res = await fetch(`${API_BASE_URL}/api/auth/send-otp/`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: user?.email }),
+    });
+    if (res.status === 429) throw new Error("Too many attempts. Please wait a minute and try again.");
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "Couldn't send the code. Please try again.");
+    setResendIn(30);
+  };
+
   const handleUnlock = async (e) => {
     e.preventDefault();
     // Password ab backend se verify hota hai (POST /api/auth/verify-password/)
@@ -177,8 +215,41 @@ export default function ZipFilesPage({ darkMode = false }) {
       });
       const data = await res.json();
       if (data.valid) {
+        // Password is correct -> now email a one-time code. The page only
+        // unlocks after that code is entered (see handleVerifyOtp).
         setError("");
         setPassword("");
+        setOtp("");
+        setOtpInfo("");
+        await sendOtp();
+        setOtpStep(true);
+      } else {
+        setError("Incorrect password. Please try again.");
+      }
+    } catch (err) {
+      setError(err?.message && err.message !== "Failed to fetch" ? err.message : "Couldn't verify password. Please try again.");
+    }
+  };
+
+  const handleVerifyOtp = async (e) => {
+    e.preventDefault();
+    if (otpBusy) return;
+    setOtpBusy(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/auth/verify-otp/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: user?.email, code: otp.trim() }),
+      });
+      if (res.status === 429) {
+        setError("Too many attempts. Please wait a minute and try again.");
+        return;
+      }
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) {
+        setError("");
+        setOtp("");
+        setOtpStep(false);
         setUnlocked(true);
         try {
           window.sessionStorage.setItem(UNLOCK_SESSION_KEY, "true");
@@ -186,16 +257,31 @@ export default function ZipFilesPage({ darkMode = false }) {
           // sessionStorage unavailable — page just re-asks next time, nothing else breaks
         }
       } else {
-        setError("Incorrect password. Please try again.");
+        setError(data.error || "Incorrect code. Please try again.");
       }
     } catch {
-      setError("Couldn't verify password. Please try again.");
+      setError("Couldn't verify the code. Please try again.");
+    } finally {
+      setOtpBusy(false);
+    }
+  };
+
+  const handleResendOtp = async () => {
+    if (resendIn > 0) return;
+    try {
+      setError("");
+      await sendOtp();
+      setOtpInfo("A new code has been sent to your email.");
+    } catch (err) {
+      setError(err?.message || "Couldn't send the code. Please try again.");
     }
   };
 
   const handleLock = () => {
     setUnlocked(false);
     setPassword("");
+    setOtpStep(false);
+    setOtp("");
     setError("");
     try {
       window.sessionStorage.removeItem(UNLOCK_SESSION_KEY);
@@ -276,6 +362,58 @@ export default function ZipFilesPage({ darkMode = false }) {
           <p className={`text-xs mt-0.5 ${subtleText}`}>Completed project files, stored securely</p>
         </div>
         <div className="flex items-center justify-center py-10">
+          {otpStep ? (
+          <form onSubmit={handleVerifyOtp} className={`w-full max-w-sm rounded-2xl p-6 ${card}`}>
+            <div className="flex flex-col items-center text-center gap-2 mb-5">
+              <span className="w-12 h-12 rounded-2xl bg-violet-50 text-violet-600 flex items-center justify-center">
+                <Mail className="w-6 h-6" />
+              </span>
+              <p className={`text-sm font-bold ${cardText}`}>Check your email</p>
+              <p className={`text-xs ${mutedText}`}>We sent a 6-digit code to {maskedEmail}. Enter it below to open Zip Files. The code expires in 10 minutes.</p>
+            </div>
+
+            <label className={`text-xs font-semibold mb-1 block ${cardText}`}>Verification code</label>
+            <input
+              type="text"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              autoFocus
+              maxLength={6}
+              value={otp}
+              onChange={(e) => { setOtp(e.target.value.replace(/\D/g, "")); setError(""); setOtpInfo(""); }}
+              placeholder="123456"
+              className={`w-full text-center tracking-[0.5em] text-lg font-semibold border rounded-lg px-3 py-2.5 outline-none focus:ring-2 focus:ring-violet-400 ${inputCls}`}
+            />
+            {error && <p className="text-[11px] text-rose-500 mt-1.5">{error}</p>}
+            {!error && otpInfo && <p className="text-[11px] text-emerald-600 mt-1.5">{otpInfo}</p>}
+
+            <button
+              type="submit"
+              disabled={otp.length !== 6 || otpBusy}
+              className="w-full mt-4 flex items-center justify-center gap-1.5 bg-gradient-to-r from-violet-600 to-indigo-600 hover:opacity-90 disabled:opacity-40 text-white text-sm font-semibold py-2.5 rounded-full transition"
+            >
+              <ShieldCheck className="w-4 h-4" /> {otpBusy ? "Verifying..." : "Verify & Unlock"}
+            </button>
+
+            <div className="flex items-center justify-between mt-3">
+              <button
+                type="button"
+                onClick={() => { setOtpStep(false); setOtp(""); setError(""); }}
+                className={`text-xs font-semibold ${mutedText} hover:underline`}
+              >
+                Back
+              </button>
+              <button
+                type="button"
+                onClick={handleResendOtp}
+                disabled={resendIn > 0}
+                className="text-xs font-semibold text-violet-600 hover:underline disabled:opacity-50 disabled:no-underline"
+              >
+                {resendIn > 0 ? `Resend code in ${resendIn}s` : "Resend code"}
+              </button>
+            </div>
+          </form>
+          ) : (
           <form onSubmit={handleUnlock} className={`w-full max-w-sm rounded-2xl p-6 ${card}`}>
             <div className="flex flex-col items-center text-center gap-2 mb-5">
               <span className="w-12 h-12 rounded-2xl bg-violet-50 text-violet-600 flex items-center justify-center">
@@ -315,6 +453,7 @@ export default function ZipFilesPage({ darkMode = false }) {
               <ShieldCheck className="w-4 h-4" /> Unlock
             </button>
           </form>
+          )}
         </div>
       </div>
     );

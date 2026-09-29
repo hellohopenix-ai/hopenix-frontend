@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { useAuth } from "../AuthContext.jsx";
 import TeamBirthdayConfetti, { isBirthdayToday } from "../TeamBirthdayConfetti.jsx";
 import * as employeesApi from "../api/employeesApi.js";
+import * as messagesApi from "../messagesApi.js";
 import {
   Calendar,
   Plus,
@@ -1399,6 +1400,29 @@ export default function EmployeesPage({ darkMode = false }) {
     });
   };
 
+  // "Don't off today" — admin asks one employee (politely) to work today
+  // instead of taking the day off (e.g. a Sunday they don't want to give
+  // off). Sent as a normal direct message so it lands in their Messages.
+  const sendDontOffRequest = async (emp) => {
+    setOpenActionMenu(null);
+    if (!emp?.authId) {
+      showToast("This employee has no linked account to message.", "error");
+      return;
+    }
+    const first = (emp.name || "").trim().split(/\s+/)[0] || "there";
+    const dayPhrase = isSunday(todayISO()) ? "today (Sunday)" : "today";
+    const text =
+      `Hi ${first}, hope you're doing well. We have some important work that needs to be completed ${dayPhrase}, ` +
+      `so we would like to politely request you to please work ${dayPhrase} instead of taking the day off. ` +
+      `We truly appreciate your understanding, support and dedication. Thank you so much!`;
+    try {
+      await messagesApi.sendMessage({ recipientId: emp.authId, text });
+      showToast(`Request sent to ${emp.name}.`, "success");
+    } catch (err) {
+      showToast(err.message || "Couldn't send the request.", "error");
+    }
+  };
+
   // Admin announces a company-wide holiday for a specific date. Sunday
   // doesn't need this — it's already automatically off — so this covers
   // everything else (Eid, a public holiday, an office closure, etc.).
@@ -2064,6 +2088,11 @@ export default function EmployeesPage({ darkMode = false }) {
                                 <UserCheck className="w-3.5 h-3.5" /> Mark active
                               </button>
                             ))}
+                            {isAdmin && !isOwnRow(e) && (
+                              <button onClick={() => sendDontOffRequest(e)} className={`w-full flex items-center gap-2 text-left px-3 py-2 text-sm ${theme.cardText} ${theme.hoverRow}`}>
+                                <Send className="w-3.5 h-3.5" /> Don't off today
+                              </button>
+                            )}
                             {canDeleteEmployees && (
                               <button onClick={() => removeEmployee(e.id)} className="w-full flex items-center gap-2 text-left px-3 py-2 text-sm text-rose-600 hover:bg-rose-50">
                                 <Trash2 className="w-3.5 h-3.5" /> Remove employee
