@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { useAuth } from "../AuthContext.jsx";
 import { useMessagingSocket } from "../MessagingSocketContext.jsx";
-import { fetchConversations, fetchThread, markThreadRead, sendMessage as apiSendMessage } from "../messagesApi.js";
+import { fetchConversations, fetchThread, markThreadRead, sendMessage as apiSendMessage, reactToMessage as apiReactToMessage } from "../messagesApi.js";
 import {
   getPendingEmployeeBirthdayMessages,
   markBirthdayMessageDelivered,
@@ -39,6 +39,8 @@ import {
   Pencil,
   PhoneOff,
   PhoneMissed,
+  Reply,
+  SmilePlus,
 } from "lucide-react";
 import { fetchCallHistory as apiFetchCallHistory } from "../callsApi.js";
 
@@ -56,6 +58,8 @@ import { fetchCallHistory as apiFetchCallHistory } from "../callsApi.js";
  * ---------------------------------------------------------------------- */
 
 const STATUS_FILTERS = ["All", "Active", "Away", "Offline"];
+
+const REACTION_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 
 const statusColor = {
   Active: "bg-emerald-50 text-emerald-600 ring-emerald-200",
@@ -955,6 +959,11 @@ export default function MessagesPage({ darkMode, conversations, setConversations
   const [taskName, setTaskName] = useState("");
   const [toast, setToast] = useState("");
   const [pendingAttachments, setPendingAttachments] = useState([]);
+  // WhatsApp-style "swipe/click a message to reply" — the message this
+  // draft will quote, or null. Cleared on send and on conversation switch.
+  const [replyTarget, setReplyTarget] = useState(null);
+  // id of the message whose little emoji picker is currently open, or null.
+  const [reactionPickerFor, setReactionPickerFor] = useState(null);
 
   // Turn any queued "it's so-and-so's birthday today" entry (written by
   // BirthdayCelebration.jsx on the employee dashboard) into a real message
@@ -1097,6 +1106,8 @@ export default function MessagesPage({ darkMode, conversations, setConversations
               }
             : null,
           is_read: m.is_read,
+          replyTo: m.replyTo || null,
+          reactions: m.reactions || [],
         };
       });
     }
@@ -1183,6 +1194,13 @@ export default function MessagesPage({ darkMode, conversations, setConversations
     return subscribe((data) => {
       if (typeof data.type === "string" && data.type.startsWith("call.")) {
         refreshCallHistory();
+        return;
+      }
+      if (data.type === "message.reaction") {
+        const partnerId = activePartnerIdRef.current;
+        if (partnerId) {
+          fetchThread(partnerId).then((msgs) => setApiThread(msgs || [])).catch(() => {});
+        }
         return;
       }
       if (data.type !== "message.new" && data.type !== "thread.read") return;
@@ -1344,6 +1362,8 @@ export default function MessagesPage({ darkMode, conversations, setConversations
     setTaskName("");
     setPendingAttachments([]);
     setProfileViewOpen(false);
+    setReplyTarget(null);
+    setReactionPickerFor(null);
   }, [activeId]);
 
   useEffect(() => {
@@ -1538,9 +1558,11 @@ export default function MessagesPage({ darkMode, conversations, setConversations
           recipientId: activePartnerId,
           text: raw,
           attachment: fileToUpload,
+          replyToId: replyTarget?.id,
         });
         setDraft("");
         setPendingAttachments([]);
+        setReplyTarget(null);
         await loadActiveThread(activePartnerId);
         await loadApiConversations();
         return;
@@ -1727,6 +1749,32 @@ export default function MessagesPage({ darkMode, conversations, setConversations
     } catch (err) {
       console.error("Could not prepare file for preview:", err);
       return dataUrl;
+    }
+  }
+
+  // -- Reply-to-message ---------------------------------------------------
+  function startReply(m) {
+    setReactionPickerFor(null);
+    setReplyTarget(m);
+    draftRef.current?.focus();
+  }
+
+  function cancelReply() {
+    setReplyTarget(null);
+  }
+
+  // -- React-to-message -----------------------------------------------------
+  // Only wired up for real (API-backed) threads — reacting on a mock/local
+  // conversation would have nothing on the server to persist it against.
+  async function handleReact(messageId, emoji) {
+    setReactionPickerFor(null);
+    if (!activePartnerId) return;
+    try {
+      await apiReactToMessage(messageId, emoji);
+      const msgs = await fetchThread(activePartnerId);
+      setApiThread(msgs || []);
+    } catch (err) {
+      console.error("Failed to react to message:", err);
     }
   }
 
@@ -2211,14 +2259,32 @@ export default function MessagesPage({ darkMode, conversations, setConversations
                       )}
                       <div className={`group flex items-start gap-1.5 ${m.outgoing ? "justify-end" : "justify-start"}`}>
                   {m.outgoing && (
-                    <button
-                      onClick={() => requestDeleteMessage(m.id)}
-                      className={`mt-2 shrink-0 rounded p-1 opacity-0 transition-opacity group-hover:opacity-100 ${subtleText} hover:bg-rose-50 hover:text-rose-500`}
-                      aria-label="Delete message"
-                      title="Delete message"
-                    >
-                      <Trash2 size={12} />
-                    </button>
+                    <div className="mt-2 flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                      <button
+                        onClick={() => setReactionPickerFor(reactionPickerFor === m.id ? null : m.id)}
+                        className={`rounded p-1 ${subtleText} hover:bg-slate-100`}
+                        aria-label="React to message"
+                        title="React"
+                      >
+                        <SmilePlus size={12} />
+                      </button>
+                      <button
+                        onClick={() => startReply(m)}
+                        className={`rounded p-1 ${subtleText} hover:bg-slate-100`}
+                        aria-label="Reply to message"
+                        title="Reply"
+                      >
+                        <Reply size={12} />
+                      </button>
+                      <button
+                        onClick={() => requestDeleteMessage(m.id)}
+                        className={`rounded p-1 ${subtleText} hover:bg-rose-50 hover:text-rose-500`}
+                        aria-label="Delete message"
+                        title="Delete message"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
                   )}
                   <div
                     className={`max-w-[85%] rounded-2xl px-3 py-2 text-[11.5px] shadow-sm sm:max-w-[70%] ${
@@ -2227,6 +2293,27 @@ export default function MessagesPage({ darkMode, conversations, setConversations
                         : `rounded-bl-sm ${darkMode ? "bg-slate-800 text-slate-300" : "bg-slate-50 text-slate-700"}`
                     }`}
                   >
+                    {m.replyTo && (
+                      <div
+                        className={`mb-1.5 rounded-lg border-l-2 px-2 py-1 text-[10px] ${
+                          m.outgoing
+                            ? "border-white/60 bg-white/10 text-white/90"
+                            : `border-violet-400 ${darkMode ? "bg-slate-900/40 text-slate-300" : "bg-white text-slate-600"}`
+                        }`}
+                      >
+                        <p className="truncate font-semibold">{m.replyTo.senderName || "User"}</p>
+                        <p className="truncate opacity-90">
+                          {m.replyTo.deleted
+                            ? "This message was deleted"
+                            : m.replyTo.text ||
+                              (m.replyTo.attachmentName
+                                ? `📎 ${m.replyTo.attachmentName}`
+                                : m.replyTo.kind === "voice"
+                                ? "🎤 Voice message"
+                                : "Attachment")}
+                        </p>
+                      </div>
+                    )}
                     {m.voice ? (
                       <VoicePlayer url={m.voice.url} duration={m.voice.duration} outgoing={m.outgoing} darkMode={darkMode} />
                     ) : m.file ? (
@@ -2273,18 +2360,79 @@ export default function MessagesPage({ darkMode, conversations, setConversations
                     <p className={`mt-1 text-right text-[9px] ${m.outgoing ? "text-white/70" : subtleText}`}>
                       {getRelativeTimeLabel(m)}
                     </p>
+                    {m.reactions && m.reactions.length > 0 && (
+                      <div className={`mt-1 flex flex-wrap gap-1 ${m.outgoing ? "justify-end" : "justify-start"}`}>
+                        {m.reactions.map((r) => (
+                          <button
+                            key={r.emoji}
+                            onClick={() => handleReact(m.id, r.emoji)}
+                            className={`flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] ${
+                              r.reactedByMe
+                                ? "bg-violet-500/30 text-violet-50"
+                                : m.outgoing
+                                ? "bg-white/15 text-white"
+                                : darkMode
+                                ? "bg-slate-700 text-slate-200"
+                                : "bg-slate-200 text-slate-700"
+                            }`}
+                            title={r.reactedByMe ? "Remove your reaction" : "React"}
+                          >
+                            <span>{r.emoji}</span>
+                            {r.count > 1 && <span>{r.count}</span>}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                   {!m.outgoing && (
-                    <button
-                      onClick={() => requestDeleteMessage(m.id)}
-                      className={`mt-2 shrink-0 rounded p-1 opacity-0 transition-opacity group-hover:opacity-100 ${subtleText} hover:bg-rose-50 hover:text-rose-500`}
-                      aria-label="Delete message"
-                      title="Delete message"
-                    >
-                      <Trash2 size={12} />
-                    </button>
+                    <div className="mt-2 flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                      <button
+                        onClick={() => requestDeleteMessage(m.id)}
+                        className={`rounded p-1 ${subtleText} hover:bg-rose-50 hover:text-rose-500`}
+                        aria-label="Delete message"
+                        title="Delete message"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                      <button
+                        onClick={() => startReply(m)}
+                        className={`rounded p-1 ${subtleText} hover:bg-slate-100`}
+                        aria-label="Reply to message"
+                        title="Reply"
+                      >
+                        <Reply size={12} />
+                      </button>
+                      <button
+                        onClick={() => setReactionPickerFor(reactionPickerFor === m.id ? null : m.id)}
+                        className={`rounded p-1 ${subtleText} hover:bg-slate-100`}
+                        aria-label="React to message"
+                        title="React"
+                      >
+                        <SmilePlus size={12} />
+                      </button>
+                    </div>
                   )}
                       </div>
+                      {reactionPickerFor === m.id && (
+                        <div className={`flex ${m.outgoing ? "justify-end" : "justify-start"} px-1 pt-1`}>
+                          <div
+                            className={`flex items-center gap-1 rounded-full border px-2 py-1 shadow-sm ${
+                              darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-white"
+                            }`}
+                          >
+                            {REACTION_EMOJIS.map((emo) => (
+                              <button
+                                key={emo}
+                                onClick={() => handleReact(m.id, emo)}
+                                className="rounded p-1 text-sm leading-none hover:bg-slate-100"
+                                aria-label={`React with ${emo}`}
+                              >
+                                {emo}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </React.Fragment>
                   );
                 });
@@ -2305,6 +2453,32 @@ export default function MessagesPage({ darkMode, conversations, setConversations
                     title="Back to individual chat"
                   >
                     <X size={12} />
+                  </button>
+                </div>
+              )}
+
+              {replyTarget && (
+                <div className={`flex items-center gap-2 border-b px-3 py-2 sm:px-4 ${borderCol}`}>
+                  <div className="h-8 w-1 shrink-0 rounded-full bg-violet-500" />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[10.5px] font-semibold text-violet-500">
+                      Replying to {replyTarget.outgoing ? "yourself" : replyTarget.sender || active?.name || "message"}
+                    </p>
+                    <p className={`truncate text-[10.5px] ${subtleText}`}>
+                      {replyTarget.text ||
+                        (replyTarget.file
+                          ? `📎 ${replyTarget.file.name}`
+                          : replyTarget.voice
+                          ? "🎤 Voice message"
+                          : "")}
+                    </p>
+                  </div>
+                  <button
+                    onClick={cancelReply}
+                    className={`shrink-0 rounded-full p-1 ${subtleText} hover:bg-rose-50 hover:text-rose-500`}
+                    aria-label="Cancel reply"
+                  >
+                    <X size={14} />
                   </button>
                 </div>
               )}

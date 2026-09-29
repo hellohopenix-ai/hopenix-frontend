@@ -45,17 +45,28 @@ export function markThreadRead(userId) {
   return apiFetch(`/thread/${userId}/read/`, { method: "POST" });
 }
 
-export function sendMessage({ recipientId, text, attachment }) {
+export function sendMessage({ recipientId, text, attachment, replyToId }) {
   if (attachment) {
     const fd = new FormData();
     fd.append("recipient", recipientId);
     if (text) fd.append("text", text);
     fd.append("attachment", attachment);
+    if (replyToId) fd.append("replyTo", replyToId);
     return apiFetch("/send/", { method: "POST", body: fd });
   } else {
     return apiFetch("/send/", {
       method: "POST",
-      body: JSON.stringify({ recipient: recipientId, text: text || "" }),
+      body: JSON.stringify({ recipient: recipientId, text: text || "", replyTo: replyToId || undefined }),
     });
   }
+}
+
+/** Reacts to `messageId` with `emoji` (WhatsApp-style: reacting with the
+ *  SAME emoji again removes it, a DIFFERENT emoji replaces it — one
+ *  reaction per person per message, enforced server-side). */
+export function reactToMessage(messageId, emoji) {
+  return apiFetch(`/messages/${messageId}/react/`, {
+    method: "POST",
+    body: JSON.stringify({ emoji }),
+  });
 }

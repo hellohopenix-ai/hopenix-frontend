@@ -10,6 +10,7 @@ import {
 } from "./callsApi.js";
 import { ensurePushSubscribed } from "./pushSubscription.js";
 import { API_ROOT } from "./apiConfig.js";
+import ringtoneAssetSrc from "./assets/ringtone..mp4";
 
 /* ---------------------------------------------------------------------
  * WHY THIS FILE EXISTS
@@ -114,6 +115,17 @@ export function MessagingSocketProvider({ darkMode, children }) {
   const callTimerIntervalRef = useRef(null);
   const pendingIceCandidatesRef = useRef([]);
 
+  // -- ringing sound --------------------------------------------------
+  // Neither phase ("incoming" popup, "outgoing" · Ringing…) ever actually
+  // played any sound before this — the call UI just sat there silently,
+  // so a call was easy to miss entirely and gave no feedback that dialing
+  // was actually happening. Two different sounds, same as a real phone:
+  // the callee hears the ringtone asset (also used by BirthdayCard.jsx),
+  // the caller hears a synthesized ringback tone (no extra asset needed).
+  const incomingRingtoneRef = useRef(null);
+  const ringbackAudioCtxRef = useRef(null);
+  const ringbackIntervalRef = useRef(null);
+
   useEffect(() => {
     if (!callToast) return;
     const t = setTimeout(() => setCallToast(""), 2200);
@@ -175,6 +187,95 @@ export function MessagingSocketProvider({ darkMode, children }) {
     setCallSeconds(0);
     setActiveCall(null);
   }, []);
+
+  const stopIncomingRingtone = useCallback(() => {
+    if (incomingRingtoneRef.current) {
+      incomingRingtoneRef.current.pause();
+      incomingRingtoneRef.current.currentTime = 0;
+      incomingRingtoneRef.current = null;
+    }
+  }, []);
+
+  const stopRingback = useCallback(() => {
+    if (ringbackIntervalRef.current) {
+      clearInterval(ringbackIntervalRef.current);
+      ringbackIntervalRef.current = null;
+    }
+    if (ringbackAudioCtxRef.current) {
+      try {
+        ringbackAudioCtxRef.current.close();
+      } catch {
+        /* already closed */
+      }
+      ringbackAudioCtxRef.current = null;
+    }
+  }, []);
+
+  const startIncomingRingtone = useCallback(() => {
+    stopIncomingRingtone();
+    const audio = new Audio(ringtoneAssetSrc);
+    audio.loop = true;
+    audio.volume = 0.85;
+    incomingRingtoneRef.current = audio;
+    // Autoplay can be blocked until the user has interacted with the page
+    // at all — harmless to swallow; the visible incoming-call popup still
+    // shows either way, this is just the sound on top of it.
+    audio.play().catch(() => {});
+  }, [stopIncomingRingtone]);
+
+  // Real phone lines use a two-tone ringback (US: 440Hz+480Hz, ~2s on/4s
+  // off). A single 425Hz burst repeated every 3s reads close enough as
+  // "ringing" without needing an extra bundled audio asset for it.
+  const startRingback = useCallback(() => {
+    stopRingback();
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      ringbackAudioCtxRef.current = ctx;
+      const playBurst = () => {
+        if (ringbackAudioCtxRef.current !== ctx) return;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.frequency.value = 425;
+        gain.gain.value = 0.05;
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 1.2);
+      };
+      playBurst();
+      ringbackIntervalRef.current = setInterval(playBurst, 3000);
+    } catch {
+      /* non-essential — a failed ringback should never break the call */
+    }
+  }, [stopRingback]);
+
+  // Plays/stops the right sound purely off the call's current phase, so
+  // every place that can change `activeCall.phase` (incoming, accepted,
+  // rejected, ended, connected, cleaned up) automatically gets the sound
+  // right without each of those call sites having to remember to do it.
+  useEffect(() => {
+    const phase = activeCall?.phase;
+    if (phase === "incoming") {
+      stopRingback();
+      startIncomingRingtone();
+    } else if (phase === "outgoing") {
+      stopIncomingRingtone();
+      startRingback();
+    } else {
+      stopIncomingRingtone();
+      stopRingback();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeCall?.phase]);
+
+  useEffect(() => {
+    return () => {
+      stopIncomingRingtone();
+      stopRingback();
+    };
+  }, [stopIncomingRingtone, stopRingback]);
 
   const flushPendingIce = (pc) => {
     pendingIceCandidatesRef.current.forEach((c) => pc.addIceCandidate(c).catch(() => {}));
