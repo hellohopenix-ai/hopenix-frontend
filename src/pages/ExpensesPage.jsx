@@ -34,6 +34,13 @@ import {
   uploadReceipt,
   removeReceipt,
 } from "../expensesApi"; // expensesApi.js lives at src/ root — adjust this path if you move it
+// Real Companies (dashboard.Client) + Projects (projects.Project) — the
+// "Company" filter here isn't saved on the Expense row itself (Expense
+// has no client field), it's only used to narrow the Project dropdown
+// down to real projects that belong to that company, so an expense can
+// only be logged against a project that actually exists in the system.
+import { listClients } from "../api/clientsApi.js";
+import { listProjects } from "../projectsApi.js";
 
 /* ------------------------------------------------------------------ */
 /*  Category / payment / status display metadata                        */
@@ -68,6 +75,7 @@ function emptyForm() {
   return {
     title: "",
     category: "Transport",
+    company: "", // UI-only: not sent to the backend, just narrows the Project dropdown
     project: "",
     amount: "",
     date: new Date().toISOString().slice(0, 10),
@@ -258,6 +266,58 @@ export default function ExpensesPage({ darkMode }) {
   // row actions + categories modal
   const [openMenuId, setOpenMenuId] = useState(null);
   const [showCategoriesModal, setShowCategoriesModal] = useState(false);
+
+  // Real companies + projects, so the add/edit form's Project dropdown
+  // only offers projects that actually exist (picking a Company narrows
+  // it down to that company's own projects).
+  const [realCompanies, setRealCompanies] = useState([]);
+  const [realProjects, setRealProjects] = useState([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    listClients()
+      .then((rows) => {
+        if (!cancelled) setRealCompanies(Array.isArray(rows) ? rows : rows?.results || []);
+      })
+      .catch((err) => console.error("Clients fetch failed, Company filter will be empty:", err));
+    listProjects()
+      .then((rows) => {
+        if (!cancelled) setRealProjects(Array.isArray(rows) ? rows : rows?.results || []);
+      })
+      .catch((err) => console.error("Projects fetch failed, Project dropdown will fall back to existing expenses:", err));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const companyNames = useMemo(
+    () => realCompanies.map((c) => c.name).filter(Boolean),
+    [realCompanies]
+  );
+
+  // Projects for the currently-picked Company (or every real project, if
+  // no company is picked yet) — plus the form's current project value,
+  // so editing an older entry doesn't clear it.
+  const projectNamesForCompany = useMemo(() => {
+    const matching = realProjects.filter((p) => {
+      if (!form.company) return true;
+      if (!p.client_name) return true;
+      return p.client_name.toLowerCase() === form.company.toLowerCase();
+    });
+    const names = matching.map((p) => p.name).filter(Boolean);
+    return Array.from(new Set([...names, ...(form.project ? [form.project] : [])]));
+  }, [realProjects, form.company, form.project]);
+
+  function updateFormCompany(value) {
+    setForm((f) => {
+      const stillValid =
+        !f.project ||
+        realProjects.some(
+          (p) => p.name === f.project && (!p.client_name || p.client_name.toLowerCase() === value.toLowerCase())
+        );
+      return { ...f, company: value, project: stillValid ? f.project : "" };
+    });
+  }
   const [showGuideModal, setShowGuideModal] = useState(false);
 
   const containerRef = useRef(null);
@@ -1059,17 +1119,32 @@ export default function ExpensesPage({ darkMode }) {
                   )}
                 </div>
                 <div>
+                  <label className={`text-[11px] font-medium ${mutedText}`}>Company</label>
+                  <select
+                    value={form.company}
+                    onChange={(e) => updateFormCompany(e.target.value)}
+                    className={`mt-1 w-full rounded-lg px-3 py-2 text-xs outline-none border ${darkMode ? "bg-slate-800 border-slate-700 text-slate-200" : "bg-slate-50 border-slate-200 text-slate-700"}`}
+                  >
+                    <option value="">All companies</option>
+                    {companyNames.map((c) => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 gap-3">
+                <div>
                   <label className={`text-[11px] font-medium ${mutedText}`}>Project</label>
-                  <input
+                  <select
                     value={form.project}
                     onChange={(e) => setForm({ ...form, project: e.target.value })}
-                    placeholder="e.g. Office"
-                    list="project-options"
                     className={`mt-1 w-full rounded-lg px-3 py-2 text-xs outline-none border ${darkMode ? "bg-slate-800 border-slate-700 text-slate-200" : "bg-slate-50 border-slate-200 text-slate-700"}`}
-                  />
-                  <datalist id="project-options">
-                    {projectOptions.filter((p) => p !== "All Projects").map((p) => <option key={p} value={p} />)}
-                  </datalist>
+                  >
+                    <option value="">Select project…</option>
+                    {projectNamesForCompany.map((p) => (
+                      <option key={p} value={p}>{p}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3">
