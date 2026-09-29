@@ -332,7 +332,8 @@ function getAssignees(task) {
 // capitalised or spaced when it was typed in.
 function isSameAssignee(a, b) {
   if (!a || !b) return false;
-  return a.trim().toLowerCase() === b.trim().toLowerCase();
+  const norm = (x) => String(x).replace(/\s+/g, " ").trim().toLowerCase();
+  return norm(a) === norm(b);
 }
 
 function assignedToUser(task, userName) {
@@ -2633,6 +2634,62 @@ export default function TasksPage({ darkMode = false, conversations = [], setCon
       cancelled = true;
     };
   }, []);
+
+  // FIX (admin dusri device se task assign kare to employee ko show nahi
+  // hota): the list above is fetched only ONCE when the page mounts, so a
+  // task an admin assigns afterwards (from another browser/device) never
+  // reached an already-open employee session until a manual reload. A
+  // plain employee's session only ever READS tasks (the auto-sync engines
+  // are admin/manager-only), so it is safe to quietly re-pull the backend
+  // list on an interval, when the tab regains focus/visibility, and when
+  // the network comes back. Admin/manager sessions are left untouched.
+  useEffect(() => {
+    if (canSeeAllTasks) return undefined;
+    let cancelled = false;
+    let inFlight = false;
+    const refresh = async () => {
+      if (inFlight || cancelled) return;
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      inFlight = true;
+      try {
+        const data = await tasksApiFetch("/tasks/");
+        const list = Array.isArray(data) ? data : data?.results || [];
+        if (!cancelled) {
+          setTasks((prev) => {
+            // Skip the state update when nothing changed, so the page does
+            // not re-render / lose scroll every few seconds for no reason.
+            let same = false;
+            try {
+              same = JSON.stringify(prev) === JSON.stringify(list);
+            } catch {
+              same = false;
+            }
+            return same ? prev : list;
+          });
+        }
+      } catch (err) {
+        // Keep whatever is already on screen; try again on the next tick.
+        console.error("Background task refresh failed:", err);
+      } finally {
+        inFlight = false;
+      }
+    };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    const timer = setInterval(refresh, 8000);
+    window.addEventListener("focus", refresh);
+    window.addEventListener("online", refresh);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("online", refresh);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canSeeAllTasks]);
 
   // FIX (reliable single-person-task -> Clients page zip sync): Create
   // Task / Edit Task now let you explicitly pick which real client (from
