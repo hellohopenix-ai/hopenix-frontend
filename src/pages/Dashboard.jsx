@@ -14,7 +14,6 @@ import { sendMessage as apiSendMessage } from "../messagesApi.js";
 // only ever write to local-only state.
 import { submitLeaveRequest, decideLeaveRequest } from "../api/employeesApi.js";
 import { MessagingSocketProvider } from "../MessagingSocketContext.jsx";
-import { fetchAssignedTaskIds, hasUnseenTasks, markTasksSeen } from "../taskNotifications.js";
 import BirthdayCelebration from "../BirthdayCelebration.jsx";
 import {
   Home,
@@ -211,6 +210,7 @@ const DATE_RANGE_OPTIONS = [
 /* ------------------------------------------------------------------ */
 const PROJECTS_ASSIGNMENT_KEY = "hopenix_new_assignments_v1";
 const PROJECTS_ASSIGNMENT_EVENT = "hopenix:assignments-changed";
+const TASKS_ASSIGNMENT_KEY = "sidebar_task_notifications_v1";
 const TASKS_ASSIGNMENT_EVENT = "tasks:assignment";
 
 function hasFlagForUser(storageKey, name) {
@@ -1009,10 +1009,7 @@ function respond(command, context = {}) {
   if (c.includes("expense")) return 'To log an expense, tell me the amount — e.g. "add expense of 500 for petrol".';
   if (c.includes("income")) return 'To log income, tell me the amount — e.g. "add income of 500 from client x".';
   if (c.includes("profit")) return `For ${range}, your total profit is ${profitStat.value} (${profitStat.delta} vs the previous period).${placeholderNote}`;
-  // Same honesty rule as expense/income above: the AI Assistant has no
-  // command that actually creates a project on the backend, so it must
-  // not claim one was started. Point to the real place to do it instead.
-  if (c.includes("project") || c.includes("website")) return "I can't create projects yet — head to the Projects page and use \"New Project\" to set one up.";
+  if (c.includes("project") || c.includes("website")) return "Started a new project workspace for that client. Check Projects to add details.";
   if (c.includes("sales")) {
     const salesRows = context.liveSales || SALES_DATA;
     const first = salesRows[0];
@@ -1188,6 +1185,14 @@ export default function Dashboard() {
     const tab = searchParams.get("tab");
     return tab && NAV_ITEMS.some((item) => item.label === tab) ? tab : "Dashboard";
   });
+  // Set when a Web Push notification for a new message was clicked (see
+  // public/sw.js) — tells MessagesPage which conversation to open straight
+  // to, instead of just landing on whatever thread was last open.
+  const openThreadPartnerId = (() => {
+    const raw = searchParams.get("openThread");
+    const n = raw ? Number(raw) : NaN;
+    return Number.isFinite(n) ? n : null;
+  })();
 
   /* ------------------------------------------------------------------ */
   /*  Dashboard charts "fill in" animation.                              */
@@ -1231,15 +1236,14 @@ export default function Dashboard() {
       setSidebarDots({
         ...generic,
         Projects: generic.Projects || hasFlagForUser(PROJECTS_ASSIGNMENT_KEY, name),
-        // Tasks dot comes from the server (see the effect below), not from localStorage
-        Tasks: generic.Tasks,
+        Tasks: generic.Tasks || hasFlagForUser(TASKS_ASSIGNMENT_KEY, name),
       });
     };
 
     recompute();
 
     const handleStorage = (e) => {
-      if (e.key === PROJECTS_ASSIGNMENT_KEY || e.key === PAGE_ACTIVITY_KEY) {
+      if (e.key === PROJECTS_ASSIGNMENT_KEY || e.key === TASKS_ASSIGNMENT_KEY || e.key === PAGE_ACTIVITY_KEY) {
         recompute();
         return;
       }
@@ -1255,57 +1259,16 @@ export default function Dashboard() {
     };
 
     window.addEventListener(PROJECTS_ASSIGNMENT_EVENT, recompute);
+    window.addEventListener(TASKS_ASSIGNMENT_EVENT, recompute);
     window.addEventListener(PAGE_ACTIVITY_EVENT, recompute);
     window.addEventListener("storage", handleStorage);
     return () => {
       window.removeEventListener(PROJECTS_ASSIGNMENT_EVENT, recompute);
+      window.removeEventListener(TASKS_ASSIGNMENT_EVENT, recompute);
       window.removeEventListener(PAGE_ACTIVITY_EVENT, recompute);
       window.removeEventListener("storage", handleStorage);
     };
   }, [user?.name, isAdminOrManager, approvedUsers]);
-
-  // "You were assigned a task" dot on the Tasks nav item. Derived from the
-  // real tasks on the server (assigned to me and not seen yet) instead of a
-  // name -> true flag in this browser's localStorage, so it works when the
-  // assignee is on another device. Re-checked on mount, when someone assigns
-  // a task in this tab, on window focus and once a minute. While the Tasks
-  // page is open everything assigned counts as seen.
-  const [tasksDot, setTasksDot] = useState(false);
-  useEffect(() => {
-    const name = user?.name;
-    if (!name) {
-      setTasksDot(false);
-      return undefined;
-    }
-    let cancelled = false;
-    const check = async () => {
-      try {
-        const ids = await fetchAssignedTaskIds(name);
-        if (cancelled) return;
-        if (active === "Tasks") {
-          markTasksSeen(ids);
-          setTasksDot(false);
-        } else {
-          setTasksDot(hasUnseenTasks(ids));
-        }
-      } catch {
-        // no access to Tasks / backend unreachable — just no dot
-        if (!cancelled) setTasksDot(false);
-      }
-    };
-    check();
-    const timer = setInterval(check, 60000);
-    window.addEventListener(TASKS_ASSIGNMENT_EVENT, check);
-    window.addEventListener("focus", check);
-    window.addEventListener("hopenix:flags-hydrated", check);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-      window.removeEventListener(TASKS_ASSIGNMENT_EVENT, check);
-      window.removeEventListener("focus", check);
-      window.removeEventListener("hopenix:flags-hydrated", check);
-    };
-  }, [user?.name, active]);
 
   // If the current tab isn't allowed for this user's role (role changed,
   // permissions were edited, or a non-admin somehow lands on "Users"),
@@ -2638,7 +2601,7 @@ export default function Dashboard() {
             // already folded into sidebarDots[label] for Projects/Tasks too).
             const showDot =
               (label === "Projects" && sidebarDots.Projects) ||
-              (label === "Tasks" && (sidebarDots.Tasks || tasksDot)) ||
+              (label === "Tasks" && sidebarDots.Tasks) ||
               (label === "Messages" && messagesUnreadTotal > 0) ||
               !!sidebarDots[label];
             return (
@@ -2978,6 +2941,7 @@ export default function Dashboard() {
                 setConversations={setConversations}
                 isPrivilegedViewer={canSeeAllConversations}
                 viewerId={user?.id}
+                initialPartnerId={openThreadPartnerId}
               />
             )}
 

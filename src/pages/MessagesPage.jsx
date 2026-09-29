@@ -934,7 +934,7 @@ function ProfileViewModal({ conversation, onClose, darkMode }) {
  * MessagesPage — drop-in content for Dashboard's <main>. Takes darkMode so
  * its cards/text match whatever theme Dashboard.jsx is currently using.
  * ---------------------------------------------------------------------- */
-export default function MessagesPage({ darkMode, conversations, setConversations, isPrivilegedViewer = true, viewerId = null }) {
+export default function MessagesPage({ darkMode, conversations, setConversations, isPrivilegedViewer = true, viewerId = null, initialPartnerId = null }) {
   const { user: currentUser } = useAuth();
   // Websocket connection + live call state/controls now live app-wide in
   // MessagingSocketProvider (mounted once in Dashboard.jsx) instead of
@@ -1354,6 +1354,21 @@ export default function MessagesPage({ darkMode, conversations, setConversations
       setActiveId(effectiveConversations[0]?.id || null);
     }
   }, [effectiveConversations, activeId]);
+
+  // WhatsApp-style deep link: opened from a "new message" push notification
+  // (see public/sw.js + Dashboard.jsx's openThread query param) — jump
+  // straight to that conversation instead of leaving whatever was last
+  // open. Only ever does this once; a `null` ref sentinel guards it so
+  // navigating elsewhere afterward doesn't keep snapping back here.
+  const appliedInitialPartnerRef = useRef(false);
+  useEffect(() => {
+    if (appliedInitialPartnerRef.current || !initialPartnerId) return;
+    const match = effectiveConversations.find((c) => c.otherUserId === initialPartnerId);
+    if (!match) return; // conversations may still be loading — try again next render
+    appliedInitialPartnerRef.current = true;
+    setActiveId(match.id);
+    setMobileView("chat");
+  }, [initialPartnerId, effectiveConversations]);
 
   useEffect(() => {
     setShowAllFiles(false);
