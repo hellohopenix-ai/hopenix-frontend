@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "../AuthContext.jsx";
 import { API_ROOT } from "../apiConfig.js";
+import { useLiveRefresh, sameJson } from "../useLiveRefresh.js";
 
 /* ======================================================================
    ZIP FILES (ADMIN) PAGE — now backed by the real API instead of
@@ -131,6 +132,17 @@ export default function ZipFilesPage({ darkMode = false }) {
     if (unlocked) loadZipFiles();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [unlocked]);
+
+  // Live: a zip uploaded from another device/browser shows up without a reload.
+  useLiveRefresh(
+    async () => {
+      const res = await fetch(`${API_BASE_URL}/api/projects/zip-files/`, { headers: authHeaders });
+      if (!res.ok) return;
+      const data = await res.json();
+      setZipFiles((prev) => (sameJson(prev, data) ? prev : data));
+    },
+    { interval: 20000, enabled: unlocked }
+  );
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();

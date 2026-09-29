@@ -3,6 +3,7 @@ import { ensurePushSubscribed, clearPushSubscription } from "./pushSubscription"
 import { configureReportsApi } from "./pages/reportsApi.js";
 import { API_ROOT } from "./apiConfig.js";
 import { hydrateFlags, flushFlags, clearLocalFlags } from "./userFlags.js";
+import { useLiveRefresh } from "./useLiveRefresh.js";
 
 const AuthContext = createContext(null);
 
@@ -738,6 +739,29 @@ export function AuthProvider({ children }) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, user?.role]);
+
+  // FIX (approval / new user / role change made on one device never showed
+  // on another): `users` (admin) and `approvedUsersLite` (everyone, used
+  // for the assignee dropdowns) were loaded once at login. Keep them live.
+  // Admin: only the cheap /users/ list is polled every 30s (the heavy
+  // per-user override fan-out in refreshUsers() is NOT repeated). The
+  // same tab focus / visibility / online triggers apply.
+  useLiveRefresh(
+    async () => {
+      if (!user?.id) return;
+      if (getRoleCategory(user.role) === "admin") {
+        const data = await apiFetch("/users/");
+        if (Array.isArray(data)) {
+          setUsers((prev) => (JSON.stringify(prev) === JSON.stringify(data) ? prev : data));
+        }
+      }
+      const lite = await apiFetch("/approved-users/");
+      if (Array.isArray(lite)) {
+        setApprovedUsersLite((prev) => (JSON.stringify(prev) === JSON.stringify(lite) ? prev : lite));
+      }
+    },
+    { interval: 30000, enabled: !!user?.id }
+  );
 
   // Restore session on refresh using the saved token (real backend call,
   // not a localStorage lookup anymore).

@@ -28,6 +28,7 @@ import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
 // didn't correspond to anything real. Now sourced from the same backend
 // ProjectsPage.jsx itself uses.
 import { listProjects } from "../projectsApi.js";
+import { useLiveRefresh, sameJson } from "../useLiveRefresh.js";
 // Real Clients list (dashboard.Client) — so the "Company" field on the
 // Add/Edit form is picked from companies that actually exist in the
 // system (ClientsPage.jsx), instead of a free-text field anyone could
@@ -438,6 +439,19 @@ export default function IncomePage({ darkMode = false }) {
       cancelled = true;
     };
   }, []);
+
+  // Live: income entries added/edited on another device appear without a
+  // reload. A failed poll keeps the current list (never blanks it).
+  useLiveRefresh(
+    async () => {
+      if (editEntry) return;
+      const rows = await apiRequest(INCOME_ENDPOINT);
+      if (!Array.isArray(rows)) return;
+      const next = rows.map(mapApiEntry);
+      setEntries((prev) => (prev && sameJson(prev, next) ? prev : next));
+    },
+    { interval: 20000 }
+  );
 
   function showToast(msg) {
     setToast(msg);

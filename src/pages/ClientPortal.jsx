@@ -3453,12 +3453,26 @@ export default function ClientPortal() {
   // who's already logged in.
   const [loading, setLoading] = useState(() => !!loadSession()?.token);
 
-  const refresh = () => {
+  // `background` = true for the automatic re-checks below. A background
+  // check only logs the client out when the server really rejected the
+  // token (401/403) — a dropped connection or a server hiccup must never
+  // kick a logged-in client back to the login screen.
+  const refresh = (background = false) => {
     if (!token) return;
     portalApi
       .fetchMe(token)
-      .then((data) => setClient(normalizePortalClient(data)))
-      .catch(() => {
+      .then((data) => {
+        const next = normalizePortalClient(data);
+        setClient((prev) => {
+          try {
+            return prev && JSON.stringify(prev) === JSON.stringify(next) ? prev : next;
+          } catch {
+            return next;
+          }
+        });
+      })
+      .catch((err) => {
+        if (background === true && !(err && (err.status === 401 || err.status === 403))) return;
         // Token invalid/expired — bounce back to login.
         setCurrentSession(null, null);
         setToken(null);
@@ -3468,16 +3482,31 @@ export default function ClientPortal() {
   };
 
   // Fetch on load (if there's a saved token) and again whenever the
-  // token changes (login/logout), plus on window focus so admin-side
-  // updates (project progress, invoices, activity) show up promptly.
+  // token changes (login/logout). FIX: it also used to re-fetch ONLY on
+  // window focus, so an admin changing something on another device
+  // (project progress, a module, an invoice, activity) never reached an
+  // already-open client portal. Now it also re-checks every 15s while the
+  // tab is visible, when the tab becomes visible again, and on reconnect.
   useEffect(() => {
     if (!token) {
       setLoading(false);
-      return;
+      return undefined;
     }
     refresh();
-    window.addEventListener("focus", refresh);
-    return () => window.removeEventListener("focus", refresh);
+    const bg = () => {
+      if (document.visibilityState === "hidden") return;
+      refresh(true);
+    };
+    const timer = setInterval(bg, 15000);
+    window.addEventListener("focus", bg);
+    window.addEventListener("online", bg);
+    document.addEventListener("visibilitychange", bg);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("focus", bg);
+      window.removeEventListener("online", bg);
+      document.removeEventListener("visibilitychange", bg);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 

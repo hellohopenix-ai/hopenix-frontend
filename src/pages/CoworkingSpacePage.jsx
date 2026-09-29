@@ -40,6 +40,7 @@ import image2 from "../assets/image2.jpg";
 import image3 from "../assets/image3.jpg";
 import phoenixLogo from "../assets/phoenix-logo.png";
 import { API_BASE_URL } from "../apiConfig.js";
+import { useLiveRefresh, sameJson } from "../useLiveRefresh.js";
 
 /* ------------------------------------------------------------------ */
 /*  Coworking backend wiring — Django app `coworking`                   */
@@ -322,6 +323,16 @@ export default function CoworkingSpacePage({ darkMode, onNavigate, role }) {
       cancelled = true;
     };
   }, []);
+
+  // Live: applications submitted/updated from another device appear without a reload.
+  useLiveRefresh(
+    async () => {
+      const list = await apiRequest(COWORKING_ENDPOINT);
+      if (!Array.isArray(list)) return;
+      setRecords((prev) => (sameJson(prev, list) ? prev : list));
+    },
+    { interval: 20000 }
+  );
 
   // Load the hero stat-card values from the same backend.
   useEffect(() => {

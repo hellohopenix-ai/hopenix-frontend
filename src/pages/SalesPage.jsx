@@ -8,6 +8,7 @@ import { API_BASE_URL as API_BASE } from "../apiConfig.js";
 // down to that company's own real projects.
 import { listClients } from "../api/clientsApi.js";
 import { listProjects } from "../projectsApi.js";
+import { useLiveRefresh, sameJson } from "../useLiveRefresh.js";
 import {
   ChevronDown,
   ChevronLeft,
@@ -376,6 +377,19 @@ export default function SalesPage({ darkMode = false }) {
       cancelled = true;
     };
   }, [reloadKey]);
+
+  // Live: sales added/edited on another device appear without a reload.
+  // Paused while the Add/Edit modal is open so it can't disturb a form.
+  useLiveRefresh(
+    async () => {
+      if (showAddModal) return;
+      const data = await fetchSalesFromApi();
+      if (!Array.isArray(data)) return;
+      const next = data.map(normalizeSale);
+      setSales((prev) => (sameJson(prev, next) ? prev : next));
+    },
+    { interval: 20000 }
+  );
 
   /* close 3-dot menu on outside click */
   useEffect(() => {

@@ -41,6 +41,7 @@ import {
 // only be logged against a project that actually exists in the system.
 import { listClients } from "../api/clientsApi.js";
 import { listProjects } from "../projectsApi.js";
+import { useLiveRefresh, sameJson } from "../useLiveRefresh.js";
 
 /* ------------------------------------------------------------------ */
 /*  Category / payment / status display metadata                        */
@@ -352,6 +353,18 @@ export default function ExpensesPage({ darkMode }) {
   useEffect(() => {
     reloadExpenses();
   }, []);
+
+  // Live: expenses added/edited on another device appear without a reload.
+  useLiveRefresh(
+    async () => {
+      if (showAddModal) return;
+      const data = await fetchExpenses();
+      if (!Array.isArray(data)) return;
+      const next = data.map(normalizeExpense);
+      setExpenses((prev) => (sameJson(prev, next) ? prev : next));
+    },
+    { interval: 20000 }
+  );
 
   /* load categories already in use (shared across everyone, not just this
      browser) so the dropdown/filters reflect the real, current set */
