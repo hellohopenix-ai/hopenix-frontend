@@ -114,6 +114,9 @@ export function MessagingSocketProvider({ darkMode, children }) {
   const callRingTimeoutRef = useRef(null);
   const callTimerIntervalRef = useRef(null);
   const pendingIceCandidatesRef = useRef([]);
+  // Id of the incoming call THIS tab/device tapped "Accept" on. Only that tab
+  // answers the caller's offer (a second open tab must not also answer).
+  const acceptedCallIdRef = useRef(null);
 
   // -- ringing sound --------------------------------------------------
   // Neither phase ("incoming" popup, "outgoing" · Ringing…) ever actually
@@ -128,7 +131,7 @@ export function MessagingSocketProvider({ darkMode, children }) {
 
   useEffect(() => {
     if (!callToast) return;
-    const t = setTimeout(() => setCallToast(""), 2200);
+    const t = setTimeout(() => setCallToast(""), 4000);
     return () => clearTimeout(t);
   }, [callToast]);
 
@@ -137,17 +140,29 @@ export function MessagingSocketProvider({ darkMode, children }) {
   // traverse (mobile data, many corporate/public Wi-Fi networks) — the
   // TURN entry is OpenRelay's free public demo server, fine for testing
   // but shared/rate-limited; swap in real TURN credentials for production.
+  //
+  // For reliable calls over mobile data set your own TURN server in the
+  // frontend env (Vercel): VITE_TURN_URLS (comma separated),
+  // VITE_TURN_USERNAME, VITE_TURN_CREDENTIAL. Without them the free demo
+  // server below is used, exactly as before.
+  const ENV_TURN_URLS = (import.meta.env?.VITE_TURN_URLS || "").split(",").map((u) => u.trim()).filter(Boolean);
   const ICE_SERVERS = [
     { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] },
-    {
-      urls: [
-        "turn:openrelay.metered.ca:80",
-        "turn:openrelay.metered.ca:443",
-        "turn:openrelay.metered.ca:443?transport=tcp",
-      ],
-      username: "openrelayproject",
-      credential: "openrelayproject",
-    },
+    ENV_TURN_URLS.length
+      ? {
+          urls: ENV_TURN_URLS,
+          username: import.meta.env?.VITE_TURN_USERNAME || "",
+          credential: import.meta.env?.VITE_TURN_CREDENTIAL || "",
+        }
+      : {
+          urls: [
+            "turn:openrelay.metered.ca:80",
+            "turn:openrelay.metered.ca:443",
+            "turn:openrelay.metered.ca:443?transport=tcp",
+          ],
+          username: "openrelayproject",
+          credential: "openrelayproject",
+        },
   ];
 
   const stopCallTimer = () => {
@@ -183,6 +198,7 @@ export function MessagingSocketProvider({ darkMode, children }) {
     }
     if (remoteAudioRef.current) remoteAudioRef.current.srcObject = null;
     pendingIceCandidatesRef.current = [];
+    acceptedCallIdRef.current = null;
     setCallMuted(false);
     setCallSeconds(0);
     setActiveCall(null);
@@ -334,9 +350,39 @@ export function MessagingSocketProvider({ darkMode, children }) {
 
   const getMicStream = async () => {
     if (callLocalStreamRef.current) return callLocalStreamRef.current;
+    if (!navigator.mediaDevices?.getUserMedia) {
+      const e = new Error("Microphone not available");
+      e.name = "NotFoundError";
+      throw e;
+    }
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     callLocalStreamRef.current = stream;
     return stream;
+  };
+
+  const releaseMic = () => {
+    if (callLocalStreamRef.current) {
+      callLocalStreamRef.current.getTracks().forEach((t) => t.stop());
+      callLocalStreamRef.current = null;
+    }
+  };
+
+  // Real reason for a failure, instead of calling every error "Could not
+  // access microphone" (a dropped network request during call setup used to
+  // be reported that way and silently hang the call up).
+  const callErrorText = (err) => {
+    switch (err?.name) {
+      case "NotAllowedError":
+      case "SecurityError":
+        return "Microphone is blocked — allow it in your browser's site settings";
+      case "NotFoundError":
+        return "No microphone found on this device";
+      case "NotReadableError":
+      case "AbortError":
+        return "Microphone is being used by another app";
+      default:
+        return "Call setup failed — please try again";
+    }
   };
 
   const beginOfferAsCaller = useCallback(async (call) => {
@@ -348,7 +394,7 @@ export function MessagingSocketProvider({ darkMode, children }) {
       await pc.setLocalDescription(offer);
       await apiSendCallSignal(call.id, { type: "offer", sdp: offer.sdp });
     } catch (err) {
-      setCallToast(err.name === "NotAllowedError" ? "Microphone access denied" : "Could not access microphone");
+      setCallToast(callErrorText(err));
       apiEndCall(call.id).catch(() => {});
       cleanupCall();
     }
@@ -367,7 +413,7 @@ export function MessagingSocketProvider({ darkMode, children }) {
       await apiSendCallSignal(call.id, { type: "answer", sdp: answer.sdp });
       setActiveCall((c) => (c ? { ...c, phase: "connecting" } : c));
     } catch (err) {
-      setCallToast(err.name === "NotAllowedError" ? "Microphone access denied" : "Could not access microphone");
+      setCallToast(callErrorText(err));
       apiEndCall(call.id).catch(() => {});
       cleanupCall();
     }
@@ -379,6 +425,10 @@ export function MessagingSocketProvider({ darkMode, children }) {
     switch (data.type) {
       case "call.incoming": {
         const call = data.call;
+        // The same ringing call reported again (e.g. the "recover a ringing
+        // call" check re-running) must NOT be treated as a second call —
+        // that used to auto-decline the very call being answered.
+        if (current && current.call.id === call.id) return;
         // Already on another call — auto-decline instead of leaving the
         // caller ringing forever with no response.
         if (current) {
@@ -427,6 +477,8 @@ export function MessagingSocketProvider({ darkMode, children }) {
         if (!current || current.call.id !== data.call_id) return;
         const payload = data.data || {};
         if (payload.type === "offer") {
+          if (acceptedCallIdRef.current !== current.call.id) return; // not the tab/device that picked up
+          if (callPcRef.current) return; // already answering
           answerAsCallee(current.call, payload.sdp);
         } else if (payload.type === "answer") {
           const pc = callPcRef.current;
@@ -452,7 +504,7 @@ export function MessagingSocketProvider({ darkMode, children }) {
   // -- the websocket itself: connects once per login, stays open for as
   // long as the person is on ANY page in the app -----------------------
   useEffect(() => {
-    if (!currentUser) return;
+    if (!currentUser?.id) return;
 
     const API_HTTP_BASE = API_ROOT;
     const WS_URL = API_HTTP_BASE.replace(/^http/, "ws") + "/ws/messages/";
@@ -540,7 +592,10 @@ export function MessagingSocketProvider({ darkMode, children }) {
       if (wsReconnectTimerRef.current) clearTimeout(wsReconnectTimerRef.current);
       if (wsRef.current) wsRef.current.close();
     };
-  }, [currentUser]);
+    // Keyed on the user's id, not the user object: the object is replaced on
+    // every profile refresh, which used to close and reopen the socket and
+    // could drop a call event in the gap.
+  }, [currentUser?.id]);
 
   // Ask for notification permission / subscribe to Web Push once per
   // login (idempotent — see pushSubscription.js), and recover any call
@@ -548,7 +603,7 @@ export function MessagingSocketProvider({ darkMode, children }) {
   // push notification itself, after missing the live event because the
   // tab/browser was closed when it was sent).
   useEffect(() => {
-    if (!currentUser) return;
+    if (!currentUser?.id) return;
     ensurePushSubscribed();
     apiFetchActiveIncomingCall()
       .then((call) => {
@@ -556,7 +611,7 @@ export function MessagingSocketProvider({ darkMode, children }) {
       })
       .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentUser]);
+  }, [currentUser?.id]);
 
   // Cleanup the peer connection / mic on logout or unmount.
   useEffect(() => {
@@ -580,9 +635,19 @@ export function MessagingSocketProvider({ darkMode, children }) {
       setCallToast("You're already on a call");
       return;
     }
+    // Ask for the microphone right now, while the tap is fresh (phones only
+    // show the permission dialog reliably for a direct tap) — not later in
+    // the middle of call setup.
+    try {
+      await getMicStream();
+    } catch (err) {
+      setCallToast(callErrorText(err));
+      return;
+    }
     try {
       const call = await apiStartCall(partner.otherUserId, "audio");
       if (call.status === "missed") {
+        releaseMic();
         setCallToast(`${partner.name || "User"} is offline — call not delivered`);
         return;
       }
@@ -602,6 +667,7 @@ export function MessagingSocketProvider({ darkMode, children }) {
         }
       }, 35000);
     } catch (err) {
+      releaseMic();
       setCallToast(err.message || "Could not start call");
     }
   }
@@ -609,9 +675,20 @@ export function MessagingSocketProvider({ darkMode, children }) {
   async function acceptCall() {
     const c = activeCallRef.current;
     if (!c) return;
+    // Microphone first, inside the tap. If it can't be had, decline cleanly
+    // and say why, instead of "accepting" and then hanging up a moment later.
+    try {
+      await getMicStream();
+    } catch (err) {
+      setCallToast(callErrorText(err));
+      apiRespondToCall(c.call.id, "reject").catch(() => {});
+      cleanupCall();
+      return;
+    }
+    acceptedCallIdRef.current = c.call.id;
     try {
       await apiRespondToCall(c.call.id, "accept");
-      setActiveCall({ ...c, phase: "connecting" });
+      setActiveCall((cur) => (cur && cur.call.id === c.call.id && cur.phase === "incoming" ? { ...cur, phase: "connecting" } : cur));
     } catch (err) {
       setCallToast(err.message || "Could not accept call");
       cleanupCall();

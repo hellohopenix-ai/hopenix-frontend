@@ -39,24 +39,45 @@ async function apiFetch(path, options = {}) {
   return res.json().catch(() => null);
 }
 
-/** Call after login. Registers /sw.js, asks for Notification permission
- * (skips silently if already denied — never re-prompts, matching browser
- * norms), subscribes to Web Push, and saves the subscription server-side. */
-export async function ensurePushSubscribed() {
-  if (!("serviceWorker" in navigator) || !("PushManager" in window)) return; // unsupported browser
+/** Registers /sw.js and subscribes this device to Web Push.
+ *
+ *  - Default (`prompt: false`, what the automatic calls after login use):
+ *    only finishes the job if the person has ALREADY allowed notifications.
+ *    It never pops the permission dialog by itself — phones ignore or
+ *    silently suppress a prompt that isn't caused by a tap, which is why the
+ *    "Enable" bar used to do nothing.
+ *  - `prompt: true` (the "Enable" button): asks for permission FIRST, while
+ *    the tap is still fresh, then subscribes and saves the subscription.
+ *
+ *  Always resolves (never throws) with `{ ok, status, message }` so the
+ *  caller can tell the person what happened. */
+export async function ensurePushSubscribed({ prompt = false } = {}) {
+  if (typeof window === "undefined" || !("Notification" in window) || !("serviceWorker" in navigator) || !("PushManager" in window)) {
+    return { ok: false, status: "unsupported", message: "This browser can't show background notifications. Open Hopenix in Chrome (or Safari on iPhone, from the Home Screen)." };
+  }
   if (!VAPID_PUBLIC_KEY || VAPID_PUBLIC_KEY.startsWith("PASTE_")) {
     console.warn("VAPID_PUBLIC_KEY not set in pushSubscription.js — call push notifications are disabled.");
-    return;
+    return { ok: false, status: "error", message: "Notifications aren't configured yet." };
   }
 
   try {
-    const registration = await navigator.serviceWorker.register("/sw.js");
-
     let permission = Notification.permission;
-    if (permission === "default") {
+    if (permission === "default" && prompt) {
+      // Must be the first thing that happens after the tap.
       permission = await Notification.requestPermission();
     }
-    if (permission !== "granted") return; // user declined — respect it
+    if (permission === "denied") {
+      return { ok: false, status: "denied", message: "Notifications are blocked for this site. Tap the lock icon in the address bar → Permissions → Notifications → Allow, then reload." };
+    }
+    if (permission !== "granted") {
+      return { ok: false, status: "default", message: prompt ? "Notification permission wasn't given — tap Enable and choose Allow." : "" };
+    }
+
+    await navigator.serviceWorker.register("/sw.js");
+    // subscribe() needs an ACTIVE service worker; right after the first
+    // register() it is often still installing, which made the old code fail
+    // silently on a fresh visit.
+    const registration = await navigator.serviceWorker.ready;
 
     let subscription = await registration.pushManager.getSubscription();
     if (!subscription) {
@@ -70,8 +91,10 @@ export async function ensurePushSubscribed() {
       method: "POST",
       body: JSON.stringify(subscription.toJSON()),
     });
+    return { ok: true, status: "subscribed", message: "" };
   } catch (err) {
     console.error("Could not set up call push notifications:", err);
+    return { ok: false, status: "error", message: `Couldn't turn notifications on (${err?.message || "unknown error"}). Please try again.` };
   }
 }
 

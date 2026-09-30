@@ -36,8 +36,15 @@ self.addEventListener("push", (event) => {
       ? `message-${data.senderId}`
       : undefined,
     requireInteraction: data.type === "call.incoming", // stays like a real incoming call
+    // Phone buzzes like a ring for a call (a short single buzz for the rest),
+    // and a repeated push for the same call/sender alerts again instead of
+    // silently replacing the earlier banner.
+    vibrate: data.type === "call.incoming" ? [400, 200, 400, 200, 400, 200, 400] : [200],
+    renotify: true,
     data,
   };
+  // renotify is only valid together with a tag.
+  if (!options.tag) delete options.renotify;
 
   event.waitUntil(
     (async () => {
