@@ -1934,7 +1934,31 @@ export default function ProjectsPage({ darkMode = false, conversations, setConve
     if (!file) return;
     try {
       const entry = await saveModuleFile(file);
-      const fileEntry = { ...entry, uploadedBy: CURRENT_USER, uploadedOn: new Date().toISOString().slice(0, 10) };
+      const localFileEntry = { ...entry, uploadedBy: CURRENT_USER, uploadedOn: new Date().toISOString().slice(0, 10) };
+      let fileEntry = localFileEntry;
+      // FIX (file attached from the module panel never reached the server, so
+      // it never showed on the Tasks / Clients / Zip Files pages): upload it to
+      // the backend like the Create/Edit forms already do. The backend then
+      // mirrors it onto the module's tasks. A module that is still unsaved
+      // (temporary "m-..." id) is uploaded by its form's own Save instead.
+      const isSavedModule = !(typeof moduleId === "string" && moduleId.startsWith("m-"));
+      if (isSavedModule) {
+        try {
+          const uploaded = await projectsApi.uploadModuleFile(projectId, moduleId, file);
+          fileEntry = {
+            id: uploaded.id,
+            fileName: uploaded.original_name,
+            mime: uploaded.mime_type,
+            size: uploaded.size,
+            uploadedBy: uploaded.uploaded_by_name || CURRENT_USER,
+            uploadedOn: (uploaded.uploaded_at || "").slice(0, 10) || localFileEntry.uploadedOn,
+            fileUrl: uploaded.file,
+            storedOnBackend: true,
+          };
+        } catch (upErr) {
+          showToast(upErr.message || "File server par save nahi hui — sirf is device par hai.", "error");
+        }
+      }
       let moduleName = "a module";
       let projectName = "";
       setProjects((list) =>
@@ -1950,7 +1974,7 @@ export default function ProjectsPage({ darkMode = false, conversations, setConve
       );
       // Whoever isn't an admin attaching a file gets it forwarded up to
       // the admin automatically — see notifyAdminOfModuleAttachment.
-      const msgFile = await buildFileMessageEntry(fileEntry);
+      const msgFile = await buildFileMessageEntry(localFileEntry);
       notifyAdminOfModuleAttachment(setConversations, approvedUsers, CURRENT_USER, {
         text: `📎 ${CURRENT_USER} attached "${file.name}" to the "${moduleName}" module${projectName ? ` on "${projectName}"` : ""}.`,
         file: msgFile,
@@ -1987,6 +2011,38 @@ export default function ProjectsPage({ darkMode = false, conversations, setConve
     let moduleName = "a module";
     let projectName = "";
     let prevUrl = "";
+    // FIX (link set from the module panel never reached the server): save it
+    // on the backend too, same pattern as persistModuleStatus — the backend
+    // mirrors it onto the module's tasks, and the Clients page reads it from
+    // the same module. Reverted with a toast if the save fails.
+    const prevSavedUrl =
+      ((projects.find((p) => p.id === projectId)?.modules || []).find((m) => m.id === moduleId)?.url || "").trim();
+    const isSavedModule = !(typeof moduleId === "string" && moduleId.startsWith("m-"));
+    if (isSavedModule && trimmed !== prevSavedUrl) {
+      moduleSavesPendingRef.current += 1;
+      moduleMutationSeqRef.current += 1;
+      projectsApi
+        .updateModule(projectId, moduleId, { url: trimmed })
+        .catch((err) => {
+          setProjects((list) =>
+            list.map((p) =>
+              p.id !== projectId
+                ? p
+                : {
+                    ...p,
+                    modules: (p.modules || []).map((m) =>
+                      m.id === moduleId && (m.url || "").trim() === trimmed ? { ...m, url: prevSavedUrl } : m
+                    ),
+                  }
+            )
+          );
+          showToast(err.message || "Link server par save nahi hua.", "error");
+        })
+        .finally(() => {
+          moduleSavesPendingRef.current -= 1;
+          moduleMutationSeqRef.current += 1;
+        });
+    }
     setProjects((list) =>
       list.map((p) => {
         if (p.id !== projectId) return p;
