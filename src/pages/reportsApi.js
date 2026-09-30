@@ -60,10 +60,7 @@ function errorMessage(data, status) {
     if (Array.isArray(first) && first.length) return String(first[0]);
     if (typeof first === "string") return first;
   }
-  if (status === 401) return "Please log in again.";
-  if (status === 413) return "The file is too large for the server. Choose a smaller photo/video.";
-  if (status >= 500) return `The server had a problem (${status}). Please try again in a moment.`;
-  return `Request failed (${status}).`;
+  return status === 401 ? "Please log in again." : `Request failed (${status}).`;
 }
 
 function qs(params) {
@@ -87,15 +84,7 @@ async function rawRequest(path, { method = "GET", params, json, form } = {}) {
     headers["Content-Type"] = "application/json";
     body = JSON.stringify(json);
   }
-  let res;
-  try {
-    res = await fetch(`${config.baseUrl}${path}${qs(params)}`, { method, headers, body });
-  } catch {
-    // fetch() only throws when no HTTP answer arrived at all (connection
-    // dropped / timed out mid-upload, offline, blocked). Say so instead of
-    // the browser's cryptic "Failed to fetch" / "Load failed".
-    throw new ApiError("Could not reach the server — check your internet connection and try again. Large videos need a stable connection.", 0, null);
-  }
+  const res = await fetch(`${config.baseUrl}${path}${qs(params)}`, { method, headers, body });
   if (!res.ok) {
     let data = null;
     try {
@@ -143,57 +132,12 @@ export async function listAllDaily(params = {}, maxPages = 10) {
   }
 }
 
-// FIX (daily report upload failed from phones / other browsers): a phone
-// photo is often 5-15 MB, which is slow on mobile data and can be over the
-// image-size limit of the file server. Big JPEG/PNG/WebP photos are scaled
-// down (longest side 2000px, JPEG 82%) in the browser before uploading —
-// plenty for a daily-report photo. Anything the browser can't decode
-// (HEIC on Chrome, GIF, videos) is sent exactly as it is.
-const SHRINK_ABOVE_BYTES = 1.5 * 1024 * 1024;
-const SHRINK_MAX_SIDE = 2000;
-
-async function shrinkImage(file) {
-  try {
-    const isShrinkable =
-      /^image\/(jpeg|png|webp|bmp)$/i.test(file.type || "") ||
-      (!file.type && /\.(jpe?g|png|webp|bmp)$/i.test(file.name || ""));
-    if (!isShrinkable || file.size <= SHRINK_ABOVE_BYTES) return file;
-    if (typeof createImageBitmap !== "function" || typeof document === "undefined") return file;
-
-    const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
-    const scale = Math.min(1, SHRINK_MAX_SIDE / Math.max(bitmap.width, bitmap.height));
-    const w = Math.max(1, Math.round(bitmap.width * scale));
-    const h = Math.max(1, Math.round(bitmap.height * scale));
-    const canvas = document.createElement("canvas");
-    canvas.width = w;
-    canvas.height = h;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) {
-      bitmap.close?.();
-      return file;
-    }
-    ctx.fillStyle = "#ffffff"; // PNG transparency would turn black in a JPEG
-    ctx.fillRect(0, 0, w, h);
-    ctx.drawImage(bitmap, 0, 0, w, h);
-    bitmap.close?.();
-
-    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.82));
-    if (!blob || blob.size >= file.size) return file; // no gain — keep the original
-    const base = (file.name || "photo").replace(/\.[^.]+$/, "");
-    return new File([blob], `${base}.jpg`, { type: "image/jpeg", lastModified: file.lastModified });
-  } catch {
-    return file;
-  }
-}
-
-export async function createDaily({ date, note, project, files }) {
+export function createDaily({ date, note, project, files }) {
   const form = new FormData();
   if (date) form.append("date", date);
   form.append("note", note || "");
   form.append("project", project || "");
-  for (const f of files || []) {
-    form.append("files", await shrinkImage(f)); // one at a time — keeps memory low on phones
-  }
+  (files || []).forEach((f) => form.append("files", f));
   return request("/api/reports/daily/", { method: "POST", form, params: { tz: browserTz } });
 }
 export const deleteDaily = (id) => request(`/api/reports/daily/${id}/`, { method: "DELETE" });
@@ -230,6 +174,23 @@ export async function downloadActivityCsv(params) {
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+
+/* ---- company assets ("Assets" module) ------------------------------ */
+
+// The section filters/sorts client-side, so pull every page (capped) up front.
+export async function listAllAssets(params = {}, maxPages = 10) {
+  let page = 1;
+  const all = [];
+  for (;;) {
+    const data = await request("/api/reports/assets/", { params: { ...params, page, pageSize: 200 } });
+    all.push(...data.results);
+    if (!data.next || page >= maxPages) return { results: all, count: data.count, truncated: !!data.next };
+    page += 1;
+  }
+}
+export const createAsset = (body) => request("/api/reports/assets/", { method: "POST", json: body });
+export const updateAsset = (id, body) => request(`/api/reports/assets/${id}/`, { method: "PATCH", json: body });
+export const deleteAsset = (id) => request(`/api/reports/assets/${id}/`, { method: "DELETE" });
 
 /* ---- projects (existing endpoint — for the "Project" dropdown) ------ */
 export async function listProjectNames() {

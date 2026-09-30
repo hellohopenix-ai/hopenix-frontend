@@ -40,8 +40,8 @@ import {
 } from "lucide-react";
 import { sendReportMessage } from "./MessagesPage.jsx";
 import * as reportsApi from "./reportsApi.js";
-import { useLiveRefresh, sameJson } from "../useLiveRefresh.js";
 import ActivitySection from "./ReportsActivity.jsx";
+import AssetsSection from "./AssetsSection.jsx";
 import {
   LineChart,
   Line,
@@ -186,24 +186,6 @@ function fileKind(mimeType) {
   if (mimeType?.startsWith("image/")) return "image";
   return "file";
 }
-
-// FIX (photo/video rejected as "Only image and video files can be attached"
-// on some phones / browsers): many devices hand over gallery files with an
-// EMPTY `file.type` (HEIC, .mov, some Android videos). The type is now also
-// worked out from the file extension when the browser doesn't give one.
-const EXT_TO_MIME = {
-  jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", gif: "image/gif", webp: "image/webp",
-  bmp: "image/bmp", heic: "image/heic", heif: "image/heic", avif: "image/avif",
-  mp4: "video/mp4", m4v: "video/mp4", "3gp": "video/mp4", mov: "video/quicktime",
-  webm: "video/webm", mkv: "video/webm", avi: "video/x-msvideo",
-};
-function guessMime(file) {
-  if (file.type) return file.type;
-  const ext = String(file.name || "").split(".").pop().toLowerCase();
-  return EXT_TO_MIME[ext] || "";
-}
-// Same limit the server enforces per file (reports/constants.py MAX_DAILY_FILE_MB).
-const MAX_DAILY_FILE_BYTES = 100 * 1024 * 1024;
 
 function fmtBytes(n) {
   if (!n) return "0 KB";
@@ -630,22 +612,6 @@ export default function ReportsPage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshTick]);
 
-  // Live: reports/approvals made on another device appear without a reload.
-  // Silent (no error toasts) so a network blip never spams the user.
-  useLiveRefresh(
-    async () => {
-      const res = await reportsApi.listAllDaily();
-      setDailyReports((prev) => (sameJson(prev, res.results) ? prev : res.results));
-      if (isAdmin) {
-        const [sum, cat] = await Promise.all([reportsApi.getSummary(rangeParams), reportsApi.getCatalog(rangeParams)]);
-        setSummary((prev) => (sameJson(prev, sum) ? prev : sum));
-        const rows = cat.results.map(toReportRow);
-        setReports((prev) => (sameJson(prev, rows) ? prev : rows));
-      }
-    },
-    { interval: 20000 }
-  );
-
   // Something outside this page (e.g. ProjectsPage) changed daily reports.
   useEffect(() => {
     const bump = () => setRefreshTick((n) => n + 1);
@@ -777,32 +743,20 @@ export default function ReportsPage({
   /* ---------------------------------------------------------------- */
 
   function handleAddDailyFiles(fileList) {
-    const picked = Array.from(fileList || []);
-    const files = picked.filter((f) => {
-      const t = guessMime(f);
-      return t.startsWith("image/") || t.startsWith("video/");
-    });
+    const files = Array.from(fileList || []).filter((f) => f.type.startsWith("image/") || f.type.startsWith("video/"));
     if (!files.length) {
       pushToast("Only image and video files can be attached");
       return;
     }
-    const withinLimit = files.filter((f) => f.size <= MAX_DAILY_FILE_BYTES);
-    if (withinLimit.length < files.length) {
-      pushToast("Files larger than 100 MB can't be uploaded and were skipped");
-    }
-    if (!withinLimit.length) return;
-    const next = withinLimit.map((file) => {
-      const type = guessMime(file);
-      return {
-        id: `f-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        file,
-        previewUrl: URL.createObjectURL(file),
-        kind: fileKind(type),
-        name: file.name,
-        type,
-        size: file.size,
-      };
-    });
+    const next = files.map((file) => ({
+      id: `f-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      file,
+      previewUrl: URL.createObjectURL(file),
+      kind: fileKind(file.type),
+      name: file.name,
+      type: file.type,
+      size: file.size,
+    }));
     setDailyPendingFiles((prev) => [...prev, ...next]);
   }
 
@@ -1760,6 +1714,9 @@ export default function ReportsPage({
 
       {/* ---------------------------------------------- Activity Log (everyone: own trail; full access: every user) */}
       <ActivitySection darkMode={darkMode} isAdmin={isAdmin} rangeParams={rangeParams} rangeLabel={selectedDateRange} />
+
+      {/* ---------------------------------------------- Company Assets (everyone: assigned to them; full access: every asset) */}
+      <AssetsSection darkMode={darkMode} isAdmin={isAdmin} />
 
       {isAdmin && (
       <>
