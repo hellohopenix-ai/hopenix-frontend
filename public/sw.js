@@ -22,6 +22,7 @@ function classify(data) {
   if (data.type === "task.assigned") return "task";
   if (data.type === "project.assigned") return "project";
   if (data.type === "visitor.request") return "visitor";
+  if (typeof data.type === "string" && data.type.startsWith("birthday.")) return "birthday";
   if (data.type === "coworking.application") return "coworking";
   if (typeof data.type === "string" && data.type.startsWith("meeting.")) return "meeting";
   return "message";
@@ -61,6 +62,8 @@ self.addEventListener("push", (event) => {
       ? "A new coworking application needs approval"
       : kind === "meeting"
       ? "You have a meeting update"
+      : kind === "birthday"
+      ? "It's a birthday today 🎂"
       : "You have a new message");
 
   // Same tag = newest notification for that call / sender / task / project
@@ -76,6 +79,8 @@ self.addEventListener("push", (event) => {
     ? `meeting-${data.type}-${data.meetingId || Date.now()}`
     : kind === "visitor" || kind === "coworking"
     ? `${kind}-${Date.now()}`
+    : kind === "birthday"
+    ? `birthday-${data.type}-${data.userId || data.clientId || "me"}`
     : data.senderId
     ? `message-${data.senderId}`
     : `hopenix-${Date.now()}`;
@@ -152,6 +157,9 @@ self.addEventListener("notificationclick", (event) => {
   else if (kind === "visitor") targetUrl = "/dashboard?tab=Visitors";
   else if (kind === "coworking") targetUrl = "/dashboard?tab=Coworking%20Space";
   else if (kind === "meeting") targetUrl = "/dashboard?tab=Meetings";
+  else if (data.type === "birthday.team" && data.userId) targetUrl = `/dashboard?tab=Messages&openThread=${data.userId}`;
+  else if (data.type === "birthday.client") targetUrl = "/dashboard?tab=Clients";
+  else if (kind === "birthday") targetUrl = "/dashboard";
   else if (data.senderId) targetUrl = `/dashboard?tab=Messages&openThread=${data.senderId}`;
 
   event.waitUntil(

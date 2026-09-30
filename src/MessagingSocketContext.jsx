@@ -577,6 +577,7 @@ export function MessagingSocketProvider({ darkMode, children }) {
             data.type === "project.assigned" ||
             data.type === "visitor.request" ||
             data.type === "coworking.application" ||
+            (typeof data.type === "string" && data.type.startsWith("birthday.")) ||
             (typeof data.type === "string" && data.type.startsWith("meeting."))
           ) {
             playNotificationSound();
