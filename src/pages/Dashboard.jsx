@@ -8,7 +8,7 @@ import { fetchExpenses, createExpense } from "../expensesApi.js";
 // write into a local, disconnected conversations mirror that
 // MessagesPage ignores once real backend data exists (see apiConversations
 // there). Sending through this instead means it actually arrives.
-import { sendMessage as apiSendMessage } from "../messagesApi.js";
+import { sendMessage as apiSendMessage, fetchConversations as apiFetchConversationsForDot } from "../messagesApi.js";
 // Real leave-request backend (same one used elsewhere for the admin's
 // Leave Requests panel) — the AI Assistant's leave automation used to
 // only ever write to local-only state.
@@ -1272,6 +1272,33 @@ export default function Dashboard() {
       window.removeEventListener("storage", handleStorage);
     };
   }, [user?.name, isAdminOrManager, approvedUsers]);
+
+  // Messages red dot = REAL unread messages from the backend (sum of each
+  // conversation's per-user unreadCount). It used to read the Dashboard's
+  // local demo conversations (seeded with unread 2/1/3 and saved in
+  // localStorage), which never cleared — so the dot was always on. Opening
+  // a thread marks it read on the server, the count drops to 0 and the dot
+  // goes away. Refreshed every 15s and instantly on socket events.
+  const [backendUnread, setBackendUnread] = useState(0);
+  const refreshBackendUnread = async () => {
+    const data = await apiFetchConversationsForDot();
+    const list = Array.isArray(data) ? data : data?.results || [];
+    setBackendUnread(list.reduce((sum, c) => sum + (Number(c.unreadCount) || 0), 0));
+  };
+  useLiveRefresh(refreshBackendUnread, { interval: 15000, enabled: !!user?.id });
+  useEffect(() => {
+    const h = () => refreshBackendUnread().catch(() => {});
+    window.addEventListener("hopenix:messages-changed", h);
+    return () => window.removeEventListener("hopenix:messages-changed", h);
+  }, []);
+
+  // Activity on the page you are ALREADY looking at counts as seen right
+  // away — its dot clears instead of waiting for you to click the menu again.
+  useEffect(() => {
+    if (active && hasPageActivityFlag(active, { name: user?.name, isAdminOrManager })) {
+      clearPageActivity(active, { name: user?.name, isAdminOrManager });
+    }
+  }, [active, sidebarDots]);
 
   // Tasks red dot, derived from the SERVER (tasks assigned to me that I
   // haven't opened yet) instead of a flag written into the assigner's own
@@ -2636,10 +2663,11 @@ export default function Dashboard() {
             // set via flagPageActivity() (see hasPageActivityFlag above —
             // already folded into sidebarDots[label] for Projects/Tasks too).
             const showDot =
-              (label === "Projects" && sidebarDots.Projects) ||
-              (label === "Tasks" && sidebarDots.Tasks) ||
-              (label === "Messages" && messagesUnreadTotal > 0) ||
-              !!sidebarDots[label];
+              label === "Messages"
+                ? backendUnread > 0
+                : (label === "Projects" && sidebarDots.Projects) ||
+                  (label === "Tasks" && sidebarDots.Tasks) ||
+                  !!sidebarDots[label];
             return (
               <button
                 key={label}
