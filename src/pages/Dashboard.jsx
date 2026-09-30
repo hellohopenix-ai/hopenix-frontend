@@ -1540,20 +1540,26 @@ export default function Dashboard() {
   /* Real notifications (bell icon dropdown) — new clients, received
      payments, and anything genuinely awaiting review, newest first. */
   const [liveNotifications, setLiveNotifications] = useState(null);
+  // Bell: admin sees every activity, staff only activity on their own
+  // allowed pages (the backend does the filtering; clients get 403).
+  const isAdminUser = !!user && user.role !== "client";
+  const BELL_SEEN_KEY = `hopenix_bell_seen_v1_${user?.id ?? "x"}`;
+  const [bellSeenAt, setBellSeenAt] = useState(0);
 
-  useEffect(() => {
-    let cancelled = false;
-    dashboardFetch(`/notifications/?limit=6`)
-      .then((data) => {
-        if (!cancelled) setLiveNotifications(data);
-      })
-      .catch((err) => {
-        console.error("Notifications fetch failed, showing demo data instead:", err);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const loadBell = async () => {
+    const data = await dashboardFetch(`/notifications/?limit=30`);
+    const list = Array.isArray(data) ? data : [];
+    setLiveNotifications(list);
+    // First time on this browser: everything already there counts as seen,
+    // so the badge only ever counts things that happen from now on.
+    let seen = Number(localStorage.getItem(BELL_SEEN_KEY) || 0);
+    if (!seen) {
+      seen = list.length ? new Date(list[0].time).getTime() : Date.now();
+      localStorage.setItem(BELL_SEEN_KEY, String(seen));
+    }
+    setBellSeenAt(seen);
+  };
+  useLiveRefresh(loadBell, { interval: 20000, enabled: isAdminUser && !!user?.id });
 
   const [growthPeriod, setGrowthPeriod] = useState("Month");
 
@@ -2822,23 +2828,34 @@ export default function Dashboard() {
           </div>
 
           <div className="flex items-center gap-2 sm:gap-4 shrink-0">
-            {/* Notifications — real data from /api/dashboard/notifications/
-                (new clients, received payments, pending expenses/module
-                requests), falling back to the demo array only if that
-                fetch hasn't resolved yet or failed. */}
-            {(() => {
-              const notifications = liveNotifications || NOTIFICATIONS;
+            {/* Notifications bell — admin: all activity, employees: only their
+                own pages' activity (from /api/dashboard/notifications/), badge =
+                how many are newer than the last time the bell was opened. */}
+            {isAdminUser && (() => {
+              const notifications = liveNotifications || [];
+              const isNew = (n) => new Date(n.time).getTime() > bellSeenAt;
+              const unread = notifications.filter(isNew).length;
+              const openBell = () => {
+                const opening = !notifOpen;
+                setNotifOpen(opening);
+                if (opening && notifications.length) {
+                  const newest = new Date(notifications[0].time).getTime();
+                  try { localStorage.setItem(BELL_SEEN_KEY, String(newest)); } catch { /* ignore */ }
+                  // keep highlighting the new ones while the list is open
+                  setTimeout(() => setBellSeenAt(newest), 4000);
+                }
+              };
               return (
             <div className="relative">
               <button
-                onClick={() => setNotifOpen((v) => !v)}
+                onClick={openBell}
                 className={`relative shrink-0 ${darkMode ? "text-slate-400 hover:text-white" : "text-slate-500 hover:text-slate-800"}`}
                 aria-label="Notifications"
               >
                 <Bell size={18} />
-                {notifications.length > 0 && (
-                  <span className="absolute -top-1.5 -right-1.5 bg-rose-500 text-white text-[9px] font-bold w-3.5 h-3.5 rounded-full flex items-center justify-center">
-                    {notifications.length}
+                {unread > 0 && (
+                  <span className="absolute -top-1.5 -right-1.5 bg-rose-500 text-white text-[9px] font-bold min-w-[14px] h-3.5 px-0.5 rounded-full flex items-center justify-center">
+                    {unread > 9 ? "9+" : unread}
                   </span>
                 )}
               </button>
@@ -2846,24 +2863,23 @@ export default function Dashboard() {
               {notifOpen && (
                 <>
                   <div className="fixed inset-0 z-40" onClick={() => setNotifOpen(false)} />
-                  {/* Mobile: fixed banner pinned by left/right margins so it can
-                      never overflow the viewport, regardless of where the bell
-                      icon sits in the header. Desktop (sm+): reverts to the
-                      original anchored dropdown right under the bell icon. */}
                   <div
-                    className={`fixed top-16 right-3 w-64 max-w-[85vw] sm:absolute sm:left-auto sm:right-0 sm:top-full sm:mt-2 sm:w-72 sm:max-w-none rounded-xl shadow-xl z-50 overflow-hidden ${card}`}
+                    className={`fixed top-16 right-3 w-72 max-w-[90vw] sm:absolute sm:left-auto sm:right-0 sm:top-full sm:mt-2 sm:w-80 sm:max-w-none rounded-xl shadow-xl z-50 overflow-hidden ${card}`}
                   >
                     <div className={`px-3.5 py-2.5 border-b ${darkMode ? "border-slate-800" : "border-slate-100"}`}>
-                      <p className={`text-xs font-semibold ${cardText}`}>Notifications</p>
+                      <p className={`text-xs font-semibold ${cardText}`}>Recent activity</p>
                     </div>
-                    <div className="max-h-64 overflow-y-auto">
+                    <div className="max-h-80 overflow-y-auto">
+                      {notifications.length === 0 && (
+                        <p className={`px-3.5 py-4 text-[11px] ${subtleText}`}>No activity yet.</p>
+                      )}
                       {notifications.map((n) => (
                         <button
                           key={n.id}
                           onClick={() => setNotifOpen(false)}
                           className={`w-full text-left px-3.5 py-2.5 flex gap-2.5 border-b last:border-b-0 transition-colors ${
                             darkMode ? "border-slate-800 hover:bg-slate-800/60" : "border-slate-50 hover:bg-slate-50"
-                          }`}
+                          } ${isNew(n) ? (darkMode ? "bg-violet-950/40" : "bg-violet-50/60") : ""}`}
                         >
                           <span className="mt-0.5 shrink-0 w-6 h-6 rounded-full bg-violet-50 text-violet-600 flex items-center justify-center">
                             <CircleCheck size={12} />
@@ -2872,7 +2888,7 @@ export default function Dashboard() {
                             <p className={`text-[11.5px] font-semibold ${cardText}`}>{n.title}</p>
                             <p className={`text-[10.5px] mt-0.5 ${subtleText}`}>{n.desc}</p>
                             <p className={`text-[9.5px] mt-1 flex items-center gap-1 ${subtleText}`}>
-                              <Clock size={9} /> {liveNotifications ? timeAgo(n.time) : n.time}
+                              <Clock size={9} /> {timeAgo(n.time)}
                             </p>
                           </span>
                         </button>
