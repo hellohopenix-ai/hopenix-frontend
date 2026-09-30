@@ -510,6 +510,11 @@ export function MessagingSocketProvider({ darkMode, children }) {
         if (typeof data.type === "string" && data.type.startsWith("call.")) {
           callEventHandlerRef.current && callEventHandlerRef.current(data);
         }
+        // "You were assigned a task" — Dashboard listens for this window
+        // event and lights the Tasks sidebar dot instantly.
+        if (data.type === "task.assigned") {
+          window.dispatchEvent(new CustomEvent("hopenix:task-assigned", { detail: data }));
+        }
         // Every subscriber (MessagesPage's message/thread handling, the
         // per-conversation call-history refresh, anything else that
         // shows up later) gets the raw event too.

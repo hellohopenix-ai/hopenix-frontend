@@ -14,6 +14,9 @@ import { sendMessage as apiSendMessage } from "../messagesApi.js";
 // only ever write to local-only state.
 import { submitLeaveRequest, decideLeaveRequest } from "../api/employeesApi.js";
 import { MessagingSocketProvider } from "../MessagingSocketContext.jsx";
+import EnableNotificationsBanner from "../components/EnableNotificationsBanner.jsx";
+import { useLiveRefresh } from "../useLiveRefresh.js";
+import { fetchAssignedTaskIds, hasUnseenTasks, markTasksSeen } from "../taskNotifications.js";
 import BirthdayCelebration from "../BirthdayCelebration.jsx";
 import {
   Home,
@@ -1269,6 +1272,39 @@ export default function Dashboard() {
       window.removeEventListener("storage", handleStorage);
     };
   }, [user?.name, isAdminOrManager, approvedUsers]);
+
+  // Tasks red dot, derived from the SERVER (tasks assigned to me that I
+  // haven't opened yet) instead of a flag written into the assigner's own
+  // browser. Checked every 20s / on focus / on reconnect, so it also
+  // catches tasks assigned while I was offline or on another device.
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  useLiveRefresh(
+    async () => {
+      const name = user?.name;
+      if (!name || !allowedPages.includes("Tasks")) return;
+      const ids = await fetchAssignedTaskIds(name);
+      if (activeRef.current === "Tasks") {
+        markTasksSeen(ids);
+        return;
+      }
+      if (hasUnseenTasks(ids) && !hasPageActivityFlag("Tasks", { name })) {
+        flagPageActivity("Tasks", { forUser: name });
+      }
+    },
+    { interval: 20000, enabled: !!user?.name }
+  );
+
+  // Instant version: the backend sends a "task.assigned" websocket event
+  // the moment someone assigns me a task (see MessagingSocketContext).
+  useEffect(() => {
+    const onAssigned = () => {
+      const name = user?.name;
+      if (name && activeRef.current !== "Tasks") flagPageActivity("Tasks", { forUser: name });
+    };
+    window.addEventListener("hopenix:task-assigned", onAssigned);
+    return () => window.removeEventListener("hopenix:task-assigned", onAssigned);
+  }, [user?.name]);
 
   // If the current tab isn't allowed for this user's role (role changed,
   // permissions were edited, or a non-admin somehow lands on "Users"),
@@ -2624,6 +2660,9 @@ export default function Dashboard() {
                   // behavior Projects/TasksPage already handle themselves
                   // for their own assignment flags.
                   clearPageActivity(label, { name: user?.name, isAdminOrManager });
+                  if (label === "Tasks" && user?.name) {
+                    fetchAssignedTaskIds(user.name).then(markTasksSeen).catch(() => {});
+                  }
                   // On mobile the sidebar is an overlay drawer — picking a
                   // page should close it so the page underneath is visible.
                   setMobileSidebarOpen(false);
@@ -2894,6 +2933,7 @@ export default function Dashboard() {
             )}
           </div>
         </header>
+        <EnableNotificationsBanner darkMode={darkMode} />
 
         {/* Below the header: scrollable main content + AI assistant, side by side */}
         <div className="flex-1 flex min-h-0 overflow-hidden">

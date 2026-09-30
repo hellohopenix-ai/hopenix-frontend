@@ -24,16 +24,32 @@ self.addEventListener("push", (event) => {
   const title = data.title || "Hopenix";
   const options = {
     body: data.body || "",
-    icon: "/logo192.png", // swap for whatever app icon actually exists in /public
-    badge: "/logo192.png",
-    // Groups/replaces older notifications for the SAME call or the SAME
-    // sender, instead of piling up a separate banner for every message.
-    tag: data.call ? `call-${data.call.id}` : data.senderId ? `message-${data.senderId}` : undefined,
-    requireInteraction: data.type === "call.incoming", // stays on screen like a real incoming call; a message toast can dismiss itself
+    icon: "/icon-192.png",
+    badge: "/icon-192.png",
+    // Groups/replaces older notifications for the SAME call, sender or task
+    // instead of piling up a separate banner each time.
+    tag: data.call
+      ? `call-${data.call.id}`
+      : data.type === "task.assigned"
+      ? `task-${data.taskId || "batch"}`
+      : data.senderId
+      ? `message-${data.senderId}`
+      : undefined,
+    requireInteraction: data.type === "call.incoming", // stays like a real incoming call
     data,
   };
 
-  event.waitUntil(self.registration.showNotification(title, options));
+  event.waitUntil(
+    (async () => {
+      // WhatsApp-Web behaviour: if the app is open, visible AND focused the
+      // user already sees the message / ringer / red dot in the page, so no
+      // OS banner. (Browsers allow skipping the banner in exactly this case.)
+      const wins = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+      const appFocused = wins.some((c) => c.visibilityState === "visible" && c.focused);
+      if (appFocused) return;
+      await self.registration.showNotification(title, options);
+    })()
+  );
 });
 
 self.addEventListener("notificationclick", (event) => {
@@ -47,6 +63,8 @@ self.addEventListener("notificationclick", (event) => {
   // since MessagingSocketProvider only mounts inside Dashboard.
   const targetUrl = callId
     ? `/dashboard?tab=Messages&incomingCall=${callId}`
+    : data.type === "task.assigned"
+    ? "/dashboard?tab=Tasks"
     : data.senderId
     ? `/dashboard?tab=Messages&openThread=${data.senderId}`
     : "/dashboard?tab=Messages";
