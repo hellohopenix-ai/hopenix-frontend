@@ -18,43 +18,64 @@ self.addEventListener("push", (event) => {
   try {
     data = event.data ? event.data.json() : {};
   } catch {
-    data = { title: "Hopenix", body: event.data ? event.data.text() : "" };
+    let text = "";
+    try {
+      text = event.data ? event.data.text() : "";
+    } catch {
+      /* unreadable payload */
+    }
+    data = { title: "Hopenix", body: text };
   }
 
-  const title = data.title || "Hopenix";
+  // Never leave the notification empty: a push that ends without a readable
+  // title/body is what showed up as a blank notification.
+  const title = data.title || (data.call ? "Incoming call" : "Hopenix");
+  const body =
+    data.body ||
+    (data.call ? "Tap to open Hopenix" : data.type === "task.assigned" ? "You have a new task" : "You have a new message");
+
+  // Same tag = the newest notification for that call / sender / task replaces
+  // the older one (and renotify makes the phone alert again).
+  const tag = data.call
+    ? `call-${data.call.id}`
+    : data.type === "task.assigned"
+    ? `task-${data.taskId || "batch"}`
+    : data.senderId
+    ? `message-${data.senderId}`
+    : `hopenix-${Date.now()}`;
+
   const options = {
-    body: data.body || "",
+    body,
     icon: "/icon-192.png",
     badge: "/icon-192.png",
-    // Groups/replaces older notifications for the SAME call, sender or task
-    // instead of piling up a separate banner each time.
-    tag: data.call
-      ? `call-${data.call.id}`
-      : data.type === "task.assigned"
-      ? `task-${data.taskId || "batch"}`
-      : data.senderId
-      ? `message-${data.senderId}`
-      : undefined,
-    requireInteraction: data.type === "call.incoming", // stays like a real incoming call
-    // Phone buzzes like a ring for a call (a short single buzz for the rest),
-    // and a repeated push for the same call/sender alerts again instead of
-    // silently replacing the earlier banner.
-    vibrate: data.type === "call.incoming" ? [400, 200, 400, 200, 400, 200, 400] : [200],
+    tag,
     renotify: true,
+    requireInteraction: data.type === "call.incoming", // stays like a real incoming call
+    // Phone buzzes like a ring for a call (a short single buzz for the rest).
+    vibrate: data.type === "call.incoming" ? [400, 200, 400, 200, 400, 200, 400] : [200],
     data,
   };
-  // renotify is only valid together with a tag.
-  if (!options.tag) delete options.renotify;
 
   event.waitUntil(
     (async () => {
-      // WhatsApp-Web behaviour: if the app is open, visible AND focused the
-      // user already sees the message / ringer / red dot in the page, so no
-      // OS banner. (Browsers allow skipping the banner in exactly this case.)
-      const wins = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
-      const appFocused = wins.some((c) => c.visibilityState === "visible" && c.focused);
-      if (appFocused) return;
+      let appFocused = false;
+      try {
+        const wins = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+        appFocused = wins.some((c) => c.visibilityState === "visible" && c.focused);
+      } catch {
+        /* treat as not focused */
+      }
+      // Always show something: Chrome insists every push produces a visible
+      // notification and otherwise shows its own blank "site updated in the
+      // background" one. When the app is open and focused the person already
+      // sees the message / ringer in the page, so the banner is removed again
+      // after a moment instead of being skipped.
       await self.registration.showNotification(title, options);
+      if (appFocused && data.type !== "call.incoming") {
+        await new Promise((resolve) => setTimeout(resolve, 2500));
+        const shown = await self.registration.getNotifications({ tag });
+        shown.forEach((n) => n.close());
+      }
     })()
   );
 });
