@@ -80,6 +80,27 @@ export async function ensurePushSubscribed({ prompt = false } = {}) {
     const registration = await navigator.serviceWorker.ready;
 
     let subscription = await registration.pushManager.getSubscription();
+    // A subscription made earlier with a DIFFERENT public key (keys were
+    // regenerated, or a test key was used) is accepted by the browser but the
+    // push service rejects every push the server signs with the current key
+    // (403 "VAPID mismatch") — so nothing ever arrives. Drop it and re-subscribe.
+    if (subscription) {
+      try {
+        const current = urlBase64ToUint8Array(VAPID_PUBLIC_KEY);
+        const existing = subscription.options?.applicationServerKey;
+        if (existing) {
+          const a = new Uint8Array(existing);
+          const same = a.length === current.length && a.every((v, i) => v === current[i]);
+          if (!same) {
+            await apiFetch("/push/unsubscribe/", { method: "POST", body: JSON.stringify({ endpoint: subscription.endpoint }) }).catch(() => {});
+            await subscription.unsubscribe();
+            subscription = null;
+          }
+        }
+      } catch {
+        /* comparison is best-effort */
+      }
+    }
     if (!subscription) {
       subscription = await registration.pushManager.subscribe({
         userVisibleOnly: true, // required by Chrome: every push must surface a visible notification
