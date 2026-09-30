@@ -73,7 +73,10 @@ export async function ensurePushSubscribed({ prompt = false } = {}) {
       return { ok: false, status: "default", message: prompt ? "Notification permission wasn't given — tap Enable and choose Allow." : "" };
     }
 
-    await navigator.serviceWorker.register("/sw.js");
+    // updateViaCache:"none" + update(): always fetch the newest sw.js, so a
+    // deployed fix isn't hidden behind a cached old service worker.
+    const reg0 = await navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" });
+    reg0.update().catch(() => {});
     // subscribe() needs an ACTIVE service worker; right after the first
     // register() it is often still installing, which made the old code fail
     // silently on a fresh visit.

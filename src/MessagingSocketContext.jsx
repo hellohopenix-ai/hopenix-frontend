@@ -9,6 +9,7 @@ import {
   fetchActiveIncomingCall as apiFetchActiveIncomingCall,
 } from "./callsApi.js";
 import { ensurePushSubscribed } from "./pushSubscription.js";
+import { playNotificationSound } from "./notificationSound.js";
 import { API_ROOT } from "./apiConfig.js";
 import ringtoneAssetSrc from "./assets/ringtone..mp4";
 
@@ -566,6 +567,20 @@ export function MessagingSocketProvider({ darkMode, children }) {
         // event and lights the Tasks sidebar dot instantly.
         if (data.type === "message.new" || data.type === "thread.read") {
           window.dispatchEvent(new Event("hopenix:messages-changed"));
+        }
+        // Sound for things that arrive while the app is open and visible
+        // (when it's hidden/closed the OS push notification makes the sound).
+        if (document.visibilityState === "visible") {
+          const mine = data.message && data.message.senderId === currentUser.id;
+          if ((data.type === "message.new" && !mine) ||
+            data.type === "task.assigned" ||
+            data.type === "project.assigned" ||
+            data.type === "visitor.request" ||
+            data.type === "coworking.application" ||
+            (typeof data.type === "string" && data.type.startsWith("meeting."))
+          ) {
+            playNotificationSound();
+          }
         }
         if (data.type === "task.assigned") {
           window.dispatchEvent(new CustomEvent("hopenix:task-assigned", { detail: data }));
