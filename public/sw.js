@@ -183,6 +183,19 @@ async function handlePush(event) {
   }
 }
 
+// The browser/push service rotated or dropped this device's registration.
+// The worker has no login token, so it asks any open Hopenix window to
+// re-register (EnableNotificationsBanner listens); if none is open, the next
+// time the app is opened it repairs itself silently.
+self.addEventListener("pushsubscriptionchange", (event) => {
+  event.waitUntil(
+    self.clients
+      .matchAll({ type: "window", includeUncontrolled: true })
+      .then((wins) => wins.forEach((c) => c.postMessage({ type: "hopenix.resubscribe" })))
+      .catch(() => {})
+  );
+});
+
 self.addEventListener("push", (event) => {
   event.waitUntil(
     handlePush(event).catch(async () => {
