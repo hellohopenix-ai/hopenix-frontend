@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import ClientBirthdayCelebration from "../ClientBirthdayCelebration.jsx";
 import { getPendingClientBirthdayMessages, markBirthdayMessageDelivered } from "../birthdayMessageDelivery.js";
 import { FLAG_KEYS, syncFlag, hydrateFlags, flushFlags, clearLocalFlags } from "../userFlags.js";
+import { fmtMoney } from "../currency.js";
 import {
   LogOut,
   Lock,
@@ -206,13 +207,8 @@ const MILESTONE_LABELS = {
   4: "Milestone 4 · Final Deliverable (ZIP)",
 };
 
-// Every amount on the client/invoices is stored in PKR (same as ClientsPage's
-// fmtMoney), so the portal shows it as PKR too — no dollar conversion. (An
-// earlier version converted to USD here; that made payments and balances look
-// like "$0.36" instead of "PKR 100".)
-function fmtMoney(n) {
-  return `PKR ${Number(n || 0).toLocaleString()}`;
-}
+// Money is formatted by currency.js: amounts are stored in PKR, and shown in
+// PKR for Pakistan clients or in USD ($) for clients from any other country.
 
 // FIX (assigned manager ka naam portal mein show nahi hota tha): the
 // backend's client payload carries `manager` as just the manager's numeric
@@ -321,6 +317,15 @@ const PAYMENT_BANK_NAME = "Meezan Bank";
 const PAYMENT_ACCOUNT_TITLE = "Hopnix Pvt Ltd";
 const PAYMENT_ACCOUNT_NUMBER = "PK36 MEZN 0001 2300 4567 891";
 const PAYMENT_IBAN_NOTE = "Please include the invoice number in your transfer note if your bank allows it.";
+
+// Extra payment options shown next to the bank account in the payment popup.
+// Swap in the real Easypaisa / Payoneer details here.
+const PAYMENT_EASYPAISA_ACCOUNT_TITLE = "Hopnix Pvt Ltd";
+const PAYMENT_EASYPAISA_NUMBER = "03XX XXXXXXX";
+const PAYMENT_EASYPAISA_NOTE = "Send via the Easypaisa app and include the invoice number in the transfer note.";
+const PAYMENT_PAYONEER_ACCOUNT_TITLE = "Hopnix Pvt Ltd";
+const PAYMENT_PAYONEER_EMAIL = "payments@example.com";
+const PAYMENT_PAYONEER_NOTE = "Send a Payoneer payment request/transfer to the email above and include the invoice number.";
 
 // InvoiceDocumentPreview (imported from ClientsPage.jsx, the admin side)
 // expects a `theme` object shaped like ClientsPage's own dark/light
@@ -926,6 +931,7 @@ function PaymentModal({ client, invoice, onClose, onSubmitted }) {
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState(false);
+  const [method, setMethod] = useState("bank"); // bank | easypaisa | payoneer
 
   if (!invoice) return null;
 
@@ -1026,20 +1032,78 @@ function PaymentModal({ client, invoice, onClose, onSubmitted }) {
             </div>
 
             <p className="text-xs font-semibold text-slate-300 mb-2">Send payment to</p>
+            <div className="flex gap-1.5 mb-2">
+              {[
+                { key: "bank", label: "Bank Account" },
+                { key: "easypaisa", label: "Easypaisa" },
+                { key: "payoneer", label: "Payoneer" },
+              ].map((m) => (
+                <button
+                  key={m.key}
+                  type="button"
+                  onClick={() => setMethod(m.key)}
+                  className={`flex-1 text-[11px] font-semibold rounded-lg py-1.5 border transition ${
+                    method === m.key
+                      ? "bg-violet-600 border-violet-500 text-white"
+                      : "bg-white/5 border-white/10 text-slate-300 hover:bg-white/10"
+                  }`}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
             <div className="bg-white/5 border border-white/10 rounded-xl p-3.5 mb-4 space-y-2">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-[11px] text-slate-500">Bank</span>
-                <span className="text-xs font-semibold text-slate-200">{PAYMENT_BANK_NAME}</span>
-              </div>
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-[11px] text-slate-500">Account title</span>
-                <span className="text-xs font-semibold text-slate-200">{PAYMENT_ACCOUNT_TITLE}</span>
-              </div>
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-[11px] text-slate-500 shrink-0">Account no.</span>
-                <span className="text-xs font-semibold text-slate-200 text-right break-all">{PAYMENT_ACCOUNT_NUMBER}</span>
-              </div>
-              <p className="text-[10.5px] text-slate-500 pt-1.5 border-t border-white/10 leading-relaxed">{PAYMENT_IBAN_NOTE}</p>
+              {method === "bank" && (
+                <>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] text-slate-500">Bank</span>
+                    <span className="text-xs font-semibold text-slate-200">{PAYMENT_BANK_NAME}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] text-slate-500">Account title</span>
+                    <span className="text-xs font-semibold text-slate-200">{PAYMENT_ACCOUNT_TITLE}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] text-slate-500 shrink-0">Account no.</span>
+                    <span className="text-xs font-semibold text-slate-200 text-right break-all">{PAYMENT_ACCOUNT_NUMBER}</span>
+                  </div>
+                  <p className="text-[10.5px] text-slate-500 pt-1.5 border-t border-white/10 leading-relaxed">{PAYMENT_IBAN_NOTE}</p>
+                </>
+              )}
+              {method === "easypaisa" && (
+                <>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] text-slate-500">Method</span>
+                    <span className="text-xs font-semibold text-slate-200">Easypaisa</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] text-slate-500">Account title</span>
+                    <span className="text-xs font-semibold text-slate-200">{PAYMENT_EASYPAISA_ACCOUNT_TITLE}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] text-slate-500 shrink-0">Account no.</span>
+                    <span className="text-xs font-semibold text-slate-200 text-right break-all">{PAYMENT_EASYPAISA_NUMBER}</span>
+                  </div>
+                  <p className="text-[10.5px] text-slate-500 pt-1.5 border-t border-white/10 leading-relaxed">{PAYMENT_EASYPAISA_NOTE}</p>
+                </>
+              )}
+              {method === "payoneer" && (
+                <>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] text-slate-500">Method</span>
+                    <span className="text-xs font-semibold text-slate-200">Payoneer</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] text-slate-500">Account title</span>
+                    <span className="text-xs font-semibold text-slate-200">{PAYMENT_PAYONEER_ACCOUNT_TITLE}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] text-slate-500 shrink-0">Payoneer email</span>
+                    <span className="text-xs font-semibold text-slate-200 text-right break-all">{PAYMENT_PAYONEER_EMAIL}</span>
+                  </div>
+                  <p className="text-[10.5px] text-slate-500 pt-1.5 border-t border-white/10 leading-relaxed">{PAYMENT_PAYONEER_NOTE}</p>
+                </>
+              )}
             </div>
 
             <p className="text-xs font-semibold text-slate-300 mb-2">Upload proof of payment</p>

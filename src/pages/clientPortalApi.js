@@ -15,6 +15,7 @@
 ====================================================================== */
 
 import { API_BASE_URL as API_ROOT_BASE } from "../apiConfig.js";
+import { currencyForCountry, setDisplayCurrency, convertMoneyInText } from "../currency.js";
 
 const BASE = `${API_ROOT_BASE}/dashboard`;
 
@@ -65,8 +66,13 @@ function firstFieldError(data) {
 const STATUS_LABELS = { pending: "Pending", submitted: "Submitted", partial: "Partial", paid: "Paid" };
 
 function normalizeClient(raw, { invoices = [], activity = [], moduleRequests = [] } = {}) {
+  // Money on the portal follows the client's country (Pakistan -> PKR,
+  // everyone else -> USD) — see currency.js.
+  setDisplayCurrency(currencyForCountry(raw.country, raw.country_code));
   return {
     id: raw.id,
+    country: raw.country || "",
+    countryCode: raw.country_code || "",
     name: raw.contact_person || raw.name,
     company: raw.name,
     email: raw.email,
@@ -168,7 +174,7 @@ function normalizeClient(raw, { invoices = [], activity = [], moduleRequests = [
     })),
     activity: activity.map((a) => ({
       id: a.id,
-      text: a.text,
+      text: convertMoneyInText(a.text),
       time: a.created_at,
     })),
     moduleRequests: moduleRequests.map((r) => ({
@@ -226,6 +232,7 @@ export async function fetchMe(token) {
 export function logout() {
   // Nothing to call server-side — the token stays valid (same as a
   // staff logout); the frontend just forgets it.
+  setDisplayCurrency("PKR"); // admin pages go back to PKR
   return Promise.resolve();
 }
 

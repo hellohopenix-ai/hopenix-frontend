@@ -8,6 +8,7 @@ import { useAuth, getRoleCategory } from "../AuthContext.jsx";
 import * as clientsApi from "../api/clientsApi.js";
 import { sendMessage as apiSendMessage } from "../messagesApi.js";
 import { FLAG_KEYS, syncFlag } from "../userFlags.js";
+import { fmtMoney } from "../currency.js";
 import {
   Users2,
   Briefcase,
@@ -1125,10 +1126,6 @@ function ProfilePicField({ value, onChange, theme, labelCls }) {
       {error && <p className="text-[11px] text-rose-500 mt-1">{error}</p>}
     </div>
   );
-}
-
-function fmtMoney(n) {
-  return `PKR ${Number(n || 0).toLocaleString()}`;
 }
 
 /* ----------------------------------------------------------------------
