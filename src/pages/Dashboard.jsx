@@ -2050,27 +2050,15 @@ export default function Dashboard() {
     if (user) updateUserProfile(user.id, { avatar: dataUrl });
   }
 
-  // Users, Tasks, Projects, Employees, Clients, Sales, Settings, Reports,
-  // Expenses and Income all have their own dedicated right-hand layout /
-  // header (stat cards, filters, tables, their own action bars) — the
-  // global AI Assistant panel doesn't belong there.
+  // The AI Assistant icon now lives in the topbar on EVERY page except
+  // Settings, and the panel is a slide-over drawer (closed until the icon is
+  // clicked), so it no longer needs to fit into any page's own layout.
   //
-  // On top of that page-based rule, canUseAiAssistant(user?.role) applies
-  // the admin-controlled global switch (UserPage's "AI Assistant
-  // Visibility" toggle): admin always sees it, everyone else only if the
-  // admin has left it turned on.
-  const showAiAssistant =
-    active !== "Users" &&
-    active !== "Tasks" &&
-    active !== "Projects" &&
-    active !== "Employees" &&
-    active !== "Clients" &&
-    active !== "Sales" &&
-    active !== "Settings" &&
-    active !== "Reports" &&
-    active !== "Expenses" &&
-    active !== "Income" &&
-    canUseAiAssistant(user?.role);
+  // On top of that, canUseAiAssistant(user?.role) applies the
+  // admin-controlled global switch (UserPage's "AI Assistant Visibility"
+  // toggle): admin always sees it, everyone else only if the admin has left
+  // it turned on.
+  const showAiAssistant = active !== "Settings" && canUseAiAssistant(user?.role);
   useEffect(() => {
     if (!showAiAssistant) setAiOpen(false);
   }, [showAiAssistant]);
