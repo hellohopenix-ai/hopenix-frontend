@@ -577,7 +577,9 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
   // Access") — see AuthContext's hasFullSubPageAccess/getSubPageAccess —
   // without making them an admin, so this is no longer a plain role check.
   const hasFullSettingsAccess = hasFullSubPageAccess("Settings");
-  const NON_ADMIN_TAB_IDS = ["general", "profile", "security"];
+  // "notifications" is per-user (each person only edits their OWN toggles and
+  // registers THEIR OWN device), so every role gets it by default.
+  const NON_ADMIN_TAB_IDS = ["general", "profile", "notifications", "security"];
   const [tab, setTab] = useState("general");
   // If access changes, or someone somehow ends up on a tab they're not
   // (or no longer) allowed to see (e.g. was on "billing" while granted
