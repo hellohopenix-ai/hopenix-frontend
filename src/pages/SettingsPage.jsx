@@ -1,7 +1,7 @@
 import React, { useRef, useState, useEffect, useContext, createContext } from "react";
 import { useAuth } from "../AuthContext.jsx";
 import { useBrand, DEFAULT_LOGO, uploadCompanyLogo, removeCompanyLogo } from "../brand.js";
-import { ensurePushSubscribed } from "../pushSubscription.js";
+import { ensurePushSubscribed, sendTestPush } from "../pushSubscription.js";
 import {
   Settings as SettingsIcon,
   User,
@@ -780,6 +780,28 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
       setNotifBusy(false);
     }
     showToast(result?.ok ? "Notifications enabled on this device" : result?.message || "Couldn't enable notifications");
+  }
+
+  // Sent by the server 15 s later, so the person can close Hopenix / lock the
+  // phone first and see whether a notification really arrives while it is closed.
+  async function runClosedAppTest() {
+    setNotifBusy(true);
+    try {
+      const sub = await ensurePushSubscribed({ prompt: true });
+      if (!sub.ok) {
+        showToast(sub.message || "This device isn't registered for notifications.");
+        return;
+      }
+      const r = await sendTestPush({ delay: 15 });
+      if (!r.configured) showToast(`Server can't send notifications: ${r.reason}`);
+      else if (!r.subscriptions) showToast("The server has no device registered for you. Tap “Enable on this device”.");
+      else showToast("Now close Hopenix and lock the phone. A test notification arrives in ~15 seconds.");
+    } catch (err) {
+      showToast(err?.message || "Test failed");
+    } finally {
+      setNotifBusy(false);
+      loadNotifStatus();
+    }
   }
 
   async function runNotificationTest() {
@@ -1598,6 +1620,13 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
                   className="text-[11px] font-semibold rounded-md px-3 py-1.5 text-white bg-gradient-to-r from-violet-600 to-indigo-600 hover:opacity-90 disabled:opacity-60"
                 >
                   {notifBusy ? "Working..." : "Send test notification"}
+                </button>
+                <button
+                  disabled={notifBusy}
+                  onClick={runClosedAppTest}
+                  className={`text-[11px] font-semibold rounded-md px-3 py-1.5 border disabled:opacity-60 ${darkMode ? "border-slate-700 text-slate-300 hover:bg-slate-800" : "border-slate-200 text-slate-600 hover:bg-white"}`}
+                >
+                  Test with app closed (15s)
                 </button>
               </div>
             </div>
