@@ -58,6 +58,7 @@ import { useResolvedAttachments } from "../attachmentStorage.js";
 import { UserMeetings } from "./Meetings";
 import { InvoiceDocumentPreview } from "./ClientsPage.jsx";
 import * as portalApi from "./clientPortalApi.js";
+import ClientPortalMessages from "./ClientPortalMessages.jsx";
 
 /* ======================================================================
    BRAND
@@ -2126,6 +2127,7 @@ function Sidebar({ client, view, onNavigate, mobileOpen, onCloseMobile, onLogout
     { key: "activity", label: "Activity Updates", icon: ActivityIcon, badge: activityCount },
     { key: "billing", label: "Billing", icon: CreditCard, badge: billingActionCount, dot: showBillingDot },
     { key: "documents", label: "Documents", icon: FileText },
+    { key: "messages", label: "Messages", icon: MessageSquare },
     { key: "meetings", label: "Meetings", icon: CalendarDays },
     { key: "support", label: "Support", icon: HelpCircle },
   ];
@@ -3320,6 +3322,8 @@ function Dashboard({ client, onLogout, onRefresh }) {
               )}
             </div>
           )}
+
+          {view === "messages" && <ClientPortalMessages token={currentToken} />}
 
           {view === "support" && (
             <div>

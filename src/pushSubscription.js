@@ -16,6 +16,7 @@
 // app "ringing" for the couple of seconds before you pick up.
 
 import { API_ROOT } from "./apiConfig.js";
+import { getMessagingToken } from "./messagingToken.js";
 
 const API_BASE_URL = `${API_ROOT}/api/messages`; // same host callsApi.js uses
 
@@ -31,7 +32,7 @@ function urlBase64ToUint8Array(base64String) {
 }
 
 async function apiFetch(path, options = {}) {
-  const token = localStorage.getItem("hopenix_auth_token");
+  const token = getMessagingToken();
   const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
   if (token) headers["Authorization"] = `Token ${token}`;
   const res = await fetch(`${API_BASE_URL}${path}`, { ...options, headers });

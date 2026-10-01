@@ -11,6 +11,7 @@ import {
 import { ensurePushSubscribed } from "./pushSubscription.js";
 import { playNotificationSound } from "./notificationSound.js";
 import { API_ROOT } from "./apiConfig.js";
+import { getMessagingToken } from "./messagingToken.js";
 import ringtoneAssetSrc from "./assets/ringtone..mp4";
 
 /* ---------------------------------------------------------------------
@@ -512,7 +513,7 @@ export function MessagingSocketProvider({ darkMode, children }) {
     let cancelled = false;
 
     async function fetchTicket() {
-      const token = localStorage.getItem("hopenix_auth_token");
+      const token = getMessagingToken();
       if (!token) return null;
       const res = await fetch(`${API_HTTP_BASE}/api/auth/ws-ticket/`, {
         method: "POST",

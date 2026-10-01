@@ -2,11 +2,12 @@
 // Token stored in localStorage under "hopenix_auth_token", sent as "Authorization: Token <key>".
 
 import { API_ROOT } from "./apiConfig.js";
+import { getMessagingToken } from "./messagingToken.js";
 
 const API_BASE_URL = `${API_ROOT}/api/messages`;
 
 async function apiFetch(path, options = {}) {
-  const token = localStorage.getItem("hopenix_auth_token");
+  const token = getMessagingToken();
   const isFormData = typeof FormData !== "undefined" && options.body instanceof FormData;
 
   const headers = { ...(options.headers || {}) };

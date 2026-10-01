@@ -5,7 +5,7 @@ import { API_ROOT } from "./apiConfig.js";
 import { hydrateFlags, flushFlags, clearLocalFlags } from "./userFlags.js";
 import { useLiveRefresh } from "./useLiveRefresh.js";
 
-const AuthContext = createContext(null);
+export const AuthContext = createContext(null);
 
 // reportsApi.js can't see how this app stores its token, so by default it
 // falls back to scanning localStorage for anything shaped like a DRF token —

@@ -6,11 +6,12 @@
 // Django backend base URL comes from src/apiConfig.js (VITE_API_BASE_URL) —
 // same host AuthContext.jsx and messagesApi.js use, just a different path.
 import { API_ROOT } from "./apiConfig.js";
+import { getMessagingToken } from "./messagingToken.js";
 
 const API_BASE_URL = `${API_ROOT}/api/messages`;
 
 async function apiFetch(path, options = {}) {
-  const token = localStorage.getItem("hopenix_auth_token");
+  const token = getMessagingToken();
   const headers = {
     "Content-Type": "application/json",
     ...(options.headers || {}),

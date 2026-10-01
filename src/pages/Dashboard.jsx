@@ -1542,7 +1542,9 @@ export default function Dashboard() {
   const [liveNotifications, setLiveNotifications] = useState(null);
   // Bell: admin sees every activity, staff only activity on their own
   // allowed pages (the backend does the filtering; clients get 403).
-  const isAdminUser = !!user && user.role !== "client";
+  // Bell icon + /notifications/ feed are for the real admin ONLY — employees,
+  // managers etc. never see the icon and never fetch the feed.
+  const isAdminUser = !!user && String(user.role || "").toLowerCase() === "admin";
   const BELL_SEEN_KEY = `hopenix_bell_seen_v1_${user?.id ?? "x"}`;
   const [bellSeenAt, setBellSeenAt] = useState(0);
 
