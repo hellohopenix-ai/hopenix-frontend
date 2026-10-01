@@ -206,18 +206,12 @@ const MILESTONE_LABELS = {
   4: "Milestone 4 · Final Deliverable (ZIP)",
 };
 
-// FIX (Clients page PKR mein calculate karta hai, lekin portal mein wohi
-// number seedha "$" laga kar dikhta tha — PKR 100 ka "$100" ban jata tha):
-// every amount stored on the client/invoices is in PKR (see ClientsPage's
-// fmtMoney), so it's now converted to USD here before display.
-// Update PKR_PER_USD whenever you want a fresher rate (1 USD = 277 PKR
-// at time of writing). Two decimals so small amounts (PKR 100 = $0.36)
-// don't round down to $0.
-const PKR_PER_USD = 277;
-
+// Every amount on the client/invoices is stored in PKR (same as ClientsPage's
+// fmtMoney), so the portal shows it as PKR too — no dollar conversion. (An
+// earlier version converted to USD here; that made payments and balances look
+// like "$0.36" instead of "PKR 100".)
 function fmtMoney(n) {
-  const usd = Number(n || 0) / PKR_PER_USD;
-  return `$${usd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return `PKR ${Number(n || 0).toLocaleString()}`;
 }
 
 // FIX (assigned manager ka naam portal mein show nahi hota tha): the
