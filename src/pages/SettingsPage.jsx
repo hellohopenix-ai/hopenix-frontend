@@ -1167,7 +1167,7 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
                       {LANGUAGES.map((l) => <option key={l}>{l}</option>)}
                     </select>
                   </SettingRow>
-                  <ToggleRow title="Enable Dark Mode" desc="Switch between light and dark appearance" checked={darkMode} onChange={setDarkMode} darkMode={darkMode} />
+                  <ToggleRow title="Light Mode" desc="Black theme is the default — turn on for a light appearance" checked={!darkMode} onChange={(v) => setDarkMode(!v)} darkMode={darkMode} />
                   <ToggleRow title="Compact Mode" desc="Reduce spacing for more content on screen" checked={company.compactMode} onChange={(v) => setCompanyField("compactMode", v)} darkMode={darkMode} />
                   <ToggleRow title="Allow Email Notifications" desc="Receive important updates via email" checked={company.emailNotifications} onChange={(v) => setCompanyField("emailNotifications", v)} darkMode={darkMode} />
                   <ToggleRow title="Auto Currency Update" desc="Automatically update exchange rates" checked={company.autoCurrencyUpdate} onChange={(v) => setCompanyField("autoCurrencyUpdate", v)} darkMode={darkMode} last />

@@ -1357,17 +1357,23 @@ export default function Dashboard() {
   // Persisted independently of login/logout — dark mode is a device/browser
   // preference, not part of the auth session, so it must survive logout
   // until the user explicitly flips it off themselves.
+  // The site's original theme is now BLACK. `darkMode` (the black theme) is
+  // the default; the header Sun button / Settings "Light Mode" switch turns
+  // light mode on, and that choice is saved. A NEW storage key is used on
+  // purpose: the old "hopenix_dark_mode_v1" held "false" for everyone who
+  // had ever opened the app (it auto-saved the old default), which would
+  // have kept them on the white theme.
   const [darkMode, setDarkMode] = useState(() => {
     try {
-      return localStorage.getItem("hopenix_dark_mode_v1") === "true";
+      return localStorage.getItem("hopenix_theme_v2") !== "light";
     } catch {
-      return false;
+      return true;
     }
   });
 
   useEffect(() => {
     try {
-      localStorage.setItem("hopenix_dark_mode_v1", darkMode ? "true" : "false");
+      localStorage.setItem("hopenix_theme_v2", darkMode ? "dark" : "light");
     } catch {
       // ignore storage errors (e.g. private browsing)
     }
@@ -2903,11 +2909,12 @@ export default function Dashboard() {
               );
             })()}
 
-            {/* Dark mode toggle — now functional, visible on all screen sizes */}
+            {/* Theme toggle: black is the default, this switches to Light mode (and back) */}
             <button
               onClick={() => setDarkMode((v) => !v)}
               className={`shrink-0 ${mutedText}`}
-              aria-label="Toggle dark mode"
+              aria-label={darkMode ? "Switch to light mode" : "Switch to black theme"}
+              title={darkMode ? "Light mode" : "Black theme"}
             >
               {darkMode ? <Sun size={18} /> : <Moon size={18} />}
             </button>
@@ -2971,7 +2978,7 @@ export default function Dashboard() {
             {showAiAssistant && (
               <button
                 onClick={() => setAiOpen((v) => !v)}
-                className="lg:hidden w-8 h-8 rounded-full bg-gradient-to-br from-violet-600 to-indigo-600 text-white flex items-center justify-center shrink-0"
+                className="w-8 h-8 rounded-full bg-gradient-to-br from-violet-600 to-indigo-600 text-white flex items-center justify-center shrink-0"
                 aria-label={aiOpen ? "Close AI Assistant" : "Open AI Assistant"}
               >
                 {aiOpen ? <X size={16} /> : <Sparkles size={14} />}
@@ -3498,8 +3505,8 @@ export default function Dashboard() {
               right-hand layout instead) */}
           {showAiAssistant && (
           <aside
-            className={`fixed lg:static z-[70] lg:z-0 inset-y-0 right-0 w-full max-w-sm lg:w-[300px] lg:h-auto lg:shrink-0 border-l flex flex-col shadow-xl lg:shadow-none transition-transform duration-300 ${card} ${
-              aiOpen ? "translate-x-0" : "translate-x-full lg:translate-x-0"
+            className={`fixed z-[70] lg:z-[80] inset-y-0 right-0 w-full max-w-sm lg:w-[340px] border-l flex flex-col shadow-xl transition-transform duration-300 ${card} ${
+              aiOpen ? "translate-x-0" : "translate-x-full pointer-events-none"
             } ${darkMode ? "border-slate-800" : "border-slate-100"}`}
           >
             <div className={`flex items-center justify-between px-4 pt-4 pb-3 shrink-0 border-b ${darkMode ? "border-slate-800" : "border-slate-50"}`}>
@@ -3513,7 +3520,7 @@ export default function Dashboard() {
                 </div>
               </div>
               <button
-                className={`lg:hidden -mr-1.5 p-1.5 rounded-lg ${darkMode ? "hover:bg-slate-800 hover:text-white" : "hover:bg-slate-100 hover:text-slate-700"} ${subtleText}`}
+                className={`-mr-1.5 p-1.5 rounded-lg ${darkMode ? "hover:bg-slate-800 hover:text-white" : "hover:bg-slate-100 hover:text-slate-700"} ${subtleText}`}
                 onClick={() => setAiOpen(false)}
                 aria-label="Close AI Assistant"
               >
