@@ -76,7 +76,11 @@ function buildTag(kind, data) {
   if (kind === "meeting") return `meeting-${data.type}-${data.meetingId || Date.now()}`;
   if (kind === "visitor" || kind === "coworking") return `${kind}-${Date.now()}`;
   if (kind === "birthday") return `birthday-${data.type}-${data.userId || data.clientId || "me"}`;
-  if (data.senderId) return `message-${data.senderId}`;
+  // Every chat message gets its OWN notification (unique tag). The old
+  // "one notification per sender, updated in place" approach stopped showing
+  // new texts after a few messages on some phones, because an update of an
+  // existing notification is not always re-displayed / re-alerted.
+  if (data.senderId) return `message-${data.senderId}-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
   return `hopenix-${Date.now()}`;
 }
 
@@ -105,7 +109,7 @@ async function handlePush(event) {
   if (!data || typeof data !== "object") data = {};
 
   const kind = classify(data);
-  let title =
+  const title =
     data.title || (kind === "call" ? "Incoming call" : kind === "missed" ? "Missed call" : "Hopenix");
   const body = data.body || defaultBody(kind);
   const tag = buildTag(kind, data);
@@ -114,19 +118,6 @@ async function handlePush(event) {
   // "did you see it?" check would be meaningless.
   const appFocused = kind === "test" ? false : await isAppFocused();
 
-  // Several messages from one person: keep ONE notification, show the
-  // latest text and a counter, like WhatsApp ("Ali (3 messages)").
-  let count = 1;
-  if (kind === "message" && data.senderId) {
-    try {
-      const prev = (await self.registration.getNotifications({ tag }))[0];
-      count = ((prev && prev.data && prev.data.count) || 0) + 1;
-      if (count > 1) title = `${title} (${count} messages)`;
-    } catch {
-      /* fine */
-    }
-  }
-
   const options = {
     body,
     icon: "/icon-192.png",
@@ -134,9 +125,11 @@ async function handlePush(event) {
     tag,
     renotify: true, // alert (sound + vibrate) again even when replacing a same-tag notification
     // An incoming call, a waiting visitor and "meeting starting soon" stay on screen until tapped.
-    requireInteraction: kind === "call" || kind === "visitor" || data.type === "meeting.soon",
+    // Stays on screen until the person taps or swipes it away (desktop
+    // browsers otherwise hide it after a few seconds).
+    requireInteraction: true,
     timestamp: Date.now(),
-    data: { ...data, count },
+    data: { ...data },
   };
 
   if (appFocused) {
@@ -167,6 +160,19 @@ async function handlePush(event) {
       });
     } catch {
       await self.registration.showNotification("Hopenix", { body: body || "You have a new notification" });
+    }
+  }
+
+  // Many messages from one person: keep the 6 newest visible, drop older ones
+  // so the shade doesn't fill up (they stay in the chat itself).
+  if (kind === "message" && data.senderId) {
+    try {
+      const mine = (await self.registration.getNotifications())
+        .filter((n) => n.data && n.data.senderId === data.senderId && classify(n.data) === "message")
+        .sort((x, y) => (y.timestamp || 0) - (x.timestamp || 0));
+      mine.slice(6).forEach((n) => n.close());
+    } catch {
+      /* fine */
     }
   }
 
@@ -212,6 +218,15 @@ self.addEventListener("push", (event) => {
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const data = event.notification.data || {};
+  if (data.senderId) {
+    // Opening the chat reads all of that person's messages: clear their other banners.
+    event.waitUntil(
+      self.registration
+        .getNotifications()
+        .then((list) => list.filter((n) => n.data && n.data.senderId === data.senderId).forEach((n) => n.close()))
+        .catch(() => {})
+    );
+  }
   const kind = classify(data);
   const callId = data.call && data.call.id;
 
