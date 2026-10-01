@@ -31,12 +31,26 @@ function urlBase64ToUint8Array(base64String) {
   return Uint8Array.from([...rawData].map((c) => c.charCodeAt(0)));
 }
 
-async function apiFetch(path, options = {}) {
-  const token = getMessagingToken();
+// `token` (optional) = use THIS auth token instead of the staff one. The
+// Client Portal passes its own, because it keeps a separate login
+// (clientportal_session_v1) so it never overwrites a staff session.
+async function apiFetch(path, { token: explicitToken, ...options } = {}) {
+  const token = explicitToken || getMessagingToken();
   const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
   if (token) headers["Authorization"] = `Token ${token}`;
   const res = await fetch(`${API_BASE_URL}${path}`, { ...options, headers });
-  if (!res.ok) throw new Error(`Push request failed (${res.status})`);
+  if (!res.ok) {
+    let body = null;
+    try {
+      body = await res.json();
+    } catch {
+      /* not JSON */
+    }
+    const err = new Error(body?.detail || body?.error || `Push request failed (${res.status})`);
+    err.status = res.status;
+    err.body = body;
+    throw err;
+  }
   return res.json().catch(() => null);
 }
 
@@ -52,7 +66,7 @@ async function apiFetch(path, options = {}) {
  *
  *  Always resolves (never throws) with `{ ok, status, message }` so the
  *  caller can tell the person what happened. */
-export async function ensurePushSubscribed({ prompt = false } = {}) {
+export async function ensurePushSubscribed({ prompt = false, token } = {}) {
   if (typeof window === "undefined" || !("Notification" in window) || !("serviceWorker" in navigator) || !("PushManager" in window)) {
     return { ok: false, status: "unsupported", message: "This browser can't show background notifications. Open Hopenix in Chrome (or Safari on iPhone, from the Home Screen)." };
   }
@@ -96,7 +110,7 @@ export async function ensurePushSubscribed({ prompt = false } = {}) {
           const a = new Uint8Array(existing);
           const same = a.length === current.length && a.every((v, i) => v === current[i]);
           if (!same) {
-            await apiFetch("/push/unsubscribe/", { method: "POST", body: JSON.stringify({ endpoint: subscription.endpoint }) }).catch(() => {});
+            await apiFetch("/push/unsubscribe/", { method: "POST", token, body: JSON.stringify({ endpoint: subscription.endpoint }) }).catch(() => {});
             await subscription.unsubscribe();
             subscription = null;
           }
@@ -105,17 +119,38 @@ export async function ensurePushSubscribed({ prompt = false } = {}) {
         /* comparison is best-effort */
       }
     }
-    if (!subscription) {
-      subscription = await registration.pushManager.subscribe({
+    const subscribeFresh = () =>
+      registration.pushManager.subscribe({
         userVisibleOnly: true, // required by Chrome: every push must surface a visible notification
         applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
       });
-    }
+    if (!subscription) subscription = await subscribeFresh();
 
-    await apiFetch("/push/subscribe/", {
-      method: "POST",
-      body: JSON.stringify(subscription.toJSON()),
-    });
+    const save = (sub) =>
+      apiFetch("/push/subscribe/", {
+        method: "POST",
+        token,
+        body: JSON.stringify(sub.toJSON()),
+      });
+    try {
+      await save(subscription);
+    } catch (err) {
+      // 409 "stale": the push service (Google) already told the server that
+      // this registration is dead (404/410), but the browser keeps handing the
+      // same dead one back — so no notification could ever arrive. Drop it and
+      // register a brand-new one.
+      if (err.status === 409 && err.body?.stale) {
+        try {
+          await subscription.unsubscribe();
+        } catch {
+          /* already gone */
+        }
+        subscription = await subscribeFresh();
+        await save(subscription);
+      } else {
+        throw err;
+      }
+    }
     return { ok: true, status: "subscribed", message: "" };
   } catch (err) {
     console.error("Could not set up call push notifications:", err);
@@ -123,8 +158,18 @@ export async function ensurePushSubscribed({ prompt = false } = {}) {
   }
 }
 
+/** Asks the server to push a test notification to THIS account's devices
+ *  (see PushTestView in messaging/views.py). `delay` (0-60 s) lets the person
+ *  close the app / lock the phone first and check it arrives while Hopenix is
+ *  not open. Resolves with the server's summary:
+ *  { configured, reason, subscriptions, delivered, removed, errors[], scheduled? }.
+ *  Rejects with a readable Error when the request itself fails. */
+export async function sendTestPush({ delay = 0, token } = {}) {
+  return apiFetch("/push/test/", { method: "POST", token, body: JSON.stringify({ delay }) });
+}
+
 /** Call on logout so a signed-out device stops being pushed to. */
-export async function clearPushSubscription() {
+export async function clearPushSubscription({ token } = {}) {
   if (!("serviceWorker" in navigator)) return;
   try {
     const registration = await navigator.serviceWorker.getRegistration();
@@ -132,6 +177,7 @@ export async function clearPushSubscription() {
     if (!subscription) return;
     await apiFetch("/push/unsubscribe/", {
       method: "POST",
+      token,
       body: JSON.stringify({ endpoint: subscription.endpoint }),
     }).catch(() => {});
     await subscription.unsubscribe();

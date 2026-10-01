@@ -59,6 +59,8 @@ import { UserMeetings } from "./Meetings";
 import { InvoiceDocumentPreview } from "./ClientsPage.jsx";
 import * as portalApi from "./clientPortalApi.js";
 import ClientPortalMessages from "./ClientPortalMessages.jsx";
+import EnableNotificationsBanner from "../components/EnableNotificationsBanner.jsx";
+import { ensurePushSubscribed, clearPushSubscription } from "../pushSubscription.js";
 
 /* ======================================================================
    BRAND
@@ -541,6 +543,20 @@ function clientIdFromUrl() {
   } catch {
     return "";
   }
+}
+
+// A tapped push notification opens /client-portal?view=messages (or
+// projects / billing / support / activity) — see messaging/push_utils.py. The
+// session is restored from localStorage, so the right page opens directly.
+function initialPortalView() {
+  try {
+    const v = new URLSearchParams(window.location.search).get("view");
+    if (["messages", "billing", "support", "documents", "meetings"].includes(v)) return { view: v, tab: "overview" };
+    if (v === "projects" || v === "activity") return { view: "dashboard", tab: v };
+  } catch {
+    // ignore — fall back to the normal landing page
+  }
+  return { view: "dashboard", tab: "overview" };
 }
 
 /* ======================================================================
@@ -2723,8 +2739,8 @@ function DocumentsView({ client }) {
 ====================================================================== */
 
 function Dashboard({ client, onLogout, onRefresh }) {
-  const [view, setView] = useState("dashboard"); // dashboard | billing | support
-  const [tab, setTab] = useState("overview"); // overview | projects | activity (used when view === "dashboard")
+  const [view, setView] = useState(() => initialPortalView().view); // dashboard | billing | support
+  const [tab, setTab] = useState(() => initialPortalView().tab); // overview | projects | activity (used when view === "dashboard")
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   // The invoice currently open in the payment popup (or null when closed).
   // Any locked milestone — a Frontend/Backend module, the final ZIP, or a
@@ -2854,6 +2870,10 @@ function Dashboard({ client, onLogout, onRefresh }) {
           >
             <Home className="w-3.5 h-3.5" /> Menu
           </button>
+
+          {/* Turn on phone/laptop notifications for messages, project updates and birthday wishes,
+              and test that they arrive. Uses the PORTAL token (separate from any staff login). */}
+          <EnableNotificationsBanner darkMode audience="client" token={currentToken} className="rounded-xl mb-4" />
 
           {view === "dashboard" && (
             <>
@@ -3535,6 +3555,13 @@ export default function ClientPortal() {
     pending.forEach((msg) => markBirthdayMessageDelivered(msg.userId, msg.dateKey, "client"));
   }, [client]);
 
+  // Already allowed on this device -> make sure the push subscription exists
+  // and is saved for THIS client (never prompts; the banner does that).
+  useEffect(() => {
+    if (!token || !client?.id) return;
+    ensurePushSubscribed({ token });
+  }, [token, client?.id]);
+
   const handleLogin = (newToken, clientData) => {
     setCurrentSession(newToken, clientData.id);
     setToken(newToken);
@@ -3544,6 +3571,7 @@ export default function ClientPortal() {
 
   const handleLogout = async () => {
     await flushFlags(); // must run before portalApi.logout() revokes the token
+    await clearPushSubscription({ token }); // same: needs the token, so before logout
     clearLocalFlags("portal");
     hydratedForRef.current = null;
     portalApi.logout();
