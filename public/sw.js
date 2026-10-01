@@ -76,10 +76,11 @@ function buildTag(kind, data) {
   if (kind === "meeting") return `meeting-${data.type}-${data.meetingId || Date.now()}`;
   if (kind === "visitor" || kind === "coworking") return `${kind}-${Date.now()}`;
   if (kind === "birthday") return `birthday-${data.type}-${data.userId || data.clientId || "me"}`;
-  // Every chat message gets its OWN notification (unique tag). The old
-  // "one notification per sender, updated in place" approach stopped showing
-  // new texts after a few messages on some phones, because an update of an
-  // existing notification is not always re-displayed / re-alerted.
+  // WhatsApp style: ONE notification per sender that always shows their latest
+  // messages. It is refreshed by posting a FRESH notification (new tag, so the
+  // phone alerts again) and then closing the previous one — updating a
+  // notification in place under the same tag stopped showing new texts after a
+  // few messages on some phones.
   if (data.senderId) return `message-${data.senderId}-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
   return `hopenix-${Date.now()}`;
 }
@@ -109,14 +110,41 @@ async function handlePush(event) {
   if (!data || typeof data !== "object") data = {};
 
   const kind = classify(data);
-  const title =
+  const baseTitle =
     data.title || (kind === "call" ? "Incoming call" : kind === "missed" ? "Missed call" : "Hopenix");
-  const body = data.body || defaultBody(kind);
+  const baseBody = data.body || defaultBody(kind);
+  let title = baseTitle;
+  let body = baseBody;
   const tag = buildTag(kind, data);
 
   // A test push must ALWAYS be visible, even while the app is open, or the
   // "did you see it?" check would be meaningless.
   const appFocused = kind === "test" ? false : await isAppFocused();
+
+  // Stack the latest messages of this sender into the one notification:
+  // newest first (so the collapsed banner shows the newest text), up to 4 lines
+  // in the pulled-down view, and a "(N messages)" counter in the title.
+  let lines = [baseBody];
+  let count = 1;
+  let previous = [];
+  if (kind === "message" && data.senderId && !appFocused) {
+    try {
+      previous = (await self.registration.getNotifications()).filter(
+        (n) => n.data && n.data.senderId === data.senderId && classify(n.data) === "message"
+      );
+      previous.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+      const last = previous[0];
+      if (last) {
+        const older = Array.isArray(last.data.lines) && last.data.lines.length ? last.data.lines : [last.body].filter(Boolean);
+        lines = [baseBody, ...older].slice(0, 4);
+        count = (Number(last.data.count) || older.length || 1) + 1;
+      }
+    } catch {
+      /* fine: show just this message */
+    }
+    if (count > 1) title = `${baseTitle} (${count} messages)`;
+    body = lines.join("\n");
+  }
 
   const options = {
     body,
@@ -129,7 +157,7 @@ async function handlePush(event) {
     // browsers otherwise hide it after a few seconds).
     requireInteraction: true,
     timestamp: Date.now(),
-    data: { ...data },
+    data: { ...data, lines, count },
   };
 
   if (appFocused) {
@@ -163,18 +191,14 @@ async function handlePush(event) {
     }
   }
 
-  // Many messages from one person: keep the 6 newest visible, drop older ones
-  // so the shade doesn't fill up (they stay in the chat itself).
-  if (kind === "message" && data.senderId) {
+  // The fresh notification now carries the stacked messages: remove the older one(s).
+  previous.forEach((n) => {
     try {
-      const mine = (await self.registration.getNotifications())
-        .filter((n) => n.data && n.data.senderId === data.senderId && classify(n.data) === "message")
-        .sort((x, y) => (y.timestamp || 0) - (x.timestamp || 0));
-      mine.slice(6).forEach((n) => n.close());
+      n.close();
     } catch {
       /* fine */
     }
-  }
+  });
 
   // If the app is open and focused the person already sees the change, so
   // the (silent) notification is removed shortly after.

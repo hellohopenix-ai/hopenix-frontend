@@ -324,8 +324,8 @@ function SettingRow({ title, desc, children, darkMode, last }) {
   // the toggle without having to be touched individually.
   const compact = useContext(CompactModeContext);
   return (
-    <div className={`flex items-center justify-between gap-3 ${compact ? "py-1.5" : "py-3"} ${last ? "" : `border-b ${darkMode ? "border-slate-800" : "border-slate-100"}`}`}>
-      <div className="min-w-0">
+    <div className={`flex items-center justify-between gap-3 flex-wrap sm:flex-nowrap ${compact ? "py-1.5" : "py-3"} ${last ? "" : `border-b ${darkMode ? "border-slate-800" : "border-slate-100"}`}`}>
+      <div className="min-w-0 flex-1 basis-40">
         <p className={`text-[12px] font-semibold ${darkMode ? "text-slate-200" : "text-slate-800"}`}>{title}</p>
         {desc && !compact && <p className={`text-[10.5px] mt-0.5 ${darkMode ? "text-slate-500" : "text-slate-400"}`}>{desc}</p>}
       </div>
@@ -1032,18 +1032,22 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
 
   return (
     <CompactModeContext.Provider value={company.compactMode}>
-    <div className={`grid grid-cols-1 gap-4 items-start relative ${hasFullSettingsAccess ? "lg:grid-cols-[220px_1fr_280px]" : "lg:grid-cols-[220px_1fr]"}`}>
+    <div className={`grid grid-cols-1 gap-4 items-start relative w-full max-w-full min-w-0 overflow-x-clip [&>*]:min-w-0 ${hasFullSettingsAccess ? "lg:grid-cols-[220px_1fr_280px]" : "lg:grid-cols-[220px_1fr]"}`}>
       {/* ---------------------------------------------- Settings sub-nav */}
       <div className={`rounded-xl p-2 shadow-sm lg:sticky lg:top-0 ${card}`}>
-        <p className={`px-2.5 pt-1.5 pb-2 text-[11px] font-semibold ${headingText}`}>Settings</p>
-        <nav className="space-y-0.5">
+        <p className={`hidden lg:block px-2.5 pt-1.5 pb-2 text-[11px] font-semibold ${headingText}`}>Settings</p>
+        <nav className="flex gap-1.5 overflow-x-auto pb-1 lg:pb-0 lg:block lg:space-y-0.5 lg:overflow-visible [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {SETTINGS_NAV.filter(({ id }) => hasFullSettingsAccess || NON_ADMIN_TAB_IDS.includes(id)).map(({ id, label, desc, icon: Icon }) => {
             const isActive = tab === id;
             return (
               <button
                 key={id}
-                onClick={() => { setTab(id); scrollToContentOnMobile(); }}
-                className={`w-full flex items-start gap-2.5 text-left px-2.5 py-2 rounded-lg transition-colors ${
+                onClick={(e) => {
+                  e.currentTarget.scrollIntoView?.({ behavior: "smooth", inline: "center", block: "nearest" });
+                  setTab(id);
+                  scrollToContentOnMobile();
+                }}
+                className={`shrink-0 lg:shrink lg:w-full flex items-center lg:items-start gap-2 lg:gap-2.5 text-left px-3 lg:px-2.5 py-2 rounded-full lg:rounded-lg whitespace-nowrap lg:whitespace-normal transition-colors ${
                   isActive
                     ? darkMode
                       ? "bg-violet-600/15 text-violet-300"
@@ -1055,8 +1059,8 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
               >
                 <Icon size={15} className={`mt-0.5 shrink-0 ${isActive ? "text-violet-500" : subtleText}`} />
                 <span className="min-w-0">
-                  <span className={`block text-[12px] font-semibold truncate ${isActive ? "" : cardText}`}>{label}</span>
-                  <span className={`block text-[10px] truncate ${subtleText}`}>{desc}</span>
+                  <span className={`block text-[12px] font-semibold lg:truncate ${isActive ? "" : cardText}`}>{label}</span>
+                  <span className={`hidden lg:block text-[10px] truncate ${subtleText}`}>{desc}</span>
                 </span>
               </button>
             );
@@ -1590,7 +1594,7 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
           <div className={`rounded-xl ${company.compactMode ? "p-3 sm:p-3.5" : "p-4 sm:p-5"} shadow-sm ${card}`}>
             <SectionHeading title="Notifications" subtitle="Choose how you're notified for each event. Changes save instantly." darkMode={darkMode} />
             <div className={`mt-4 rounded-lg p-3 border flex flex-wrap items-center justify-between gap-3 ${darkMode ? "border-slate-800 bg-slate-800/40" : "border-slate-100 bg-slate-50"}`}>
-              <div className="min-w-0">
+              <div className="min-w-0 w-full sm:w-auto sm:flex-1">
                 <p className={`text-[12px] font-semibold ${cardText}`}>
                   {!notifStatus
                     ? "Checking push status..."
@@ -1607,7 +1611,7 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
                   {notifStatus && !notifStatus.company_email_enabled ? " It is currently OFF, so no emails are being sent." : ""}
                 </p>
               </div>
-              <div className="flex items-center gap-2 shrink-0">
+              <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
                 {notifStatus?.push_configured && (
                   <button
                     disabled={notifBusy}
@@ -1635,13 +1639,13 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
             </div>
             <PhoneNotificationHelp darkMode={darkMode} />
             <div className="mt-4 overflow-x-auto">
-              <table className="w-full text-left border-collapse min-w-[420px]">
+              <table className="w-full text-left border-collapse min-w-[300px]">
                 <thead>
                   <tr className={`text-[10.5px] uppercase tracking-wide ${subtleText}`}>
                     <th className="py-2 font-semibold">Event</th>
-                    <th className="py-2 font-semibold text-center w-20">Email</th>
-                    <th className="py-2 font-semibold text-center w-20">Push</th>
-                    <th className="py-2 font-semibold text-center w-20" title="SMS delivery needs an SMS provider, which isn't connected yet">SMS*</th>
+                    <th className="py-2 font-semibold text-center w-14 sm:w-20">Email</th>
+                    <th className="py-2 font-semibold text-center w-14 sm:w-20">Push</th>
+                    <th className="py-2 font-semibold text-center w-14 sm:w-20" title="SMS delivery needs an SMS provider, which isn't connected yet">SMS*</th>
                   </tr>
                 </thead>
                 <tbody>
