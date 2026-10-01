@@ -2919,6 +2919,18 @@ export default function Dashboard() {
               {darkMode ? <Sun size={18} /> : <Moon size={18} />}
             </button>
 
+            {/* AI Assistant icon — click to open the panel */}
+            {showAiAssistant && (
+              <button
+                onClick={() => setAiOpen((v) => !v)}
+                className="w-8 h-8 rounded-full bg-gradient-to-br from-violet-600 to-indigo-600 text-white flex items-center justify-center shrink-0"
+                aria-label={aiOpen ? "Close AI Assistant" : "Open AI Assistant"}
+                title="AI Assistant"
+              >
+                {aiOpen ? <X size={16} /> : <Sparkles size={14} />}
+              </button>
+            )}
+
             <div className="relative shrink-0">
               <button
                 onClick={() => {
@@ -2975,15 +2987,6 @@ export default function Dashboard() {
                 </>
               )}
             </div>
-            {showAiAssistant && (
-              <button
-                onClick={() => setAiOpen((v) => !v)}
-                className="w-8 h-8 rounded-full bg-gradient-to-br from-violet-600 to-indigo-600 text-white flex items-center justify-center shrink-0"
-                aria-label={aiOpen ? "Close AI Assistant" : "Open AI Assistant"}
-              >
-                {aiOpen ? <X size={16} /> : <Sparkles size={14} />}
-              </button>
-            )}
           </div>
         </header>
         <EnableNotificationsBanner darkMode={darkMode} />
