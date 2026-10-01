@@ -718,7 +718,11 @@ export function MessagingSocketProvider({ darkMode, children }) {
       const call = await apiStartCall(partner.otherUserId, "audio");
       if (call.status === "missed") {
         releaseMic();
-        setCallToast(`${partner.name || "User"} is offline — call not delivered`);
+        setCallToast(
+          call.fallbackPhone
+            ? `${partner.name || "User"} is not available on website app — call on SIM number: ${call.fallbackPhone}`
+            : `${partner.name || "User"} is offline — call not delivered`
+        );
         return;
       }
       setActiveCall({
@@ -731,7 +735,17 @@ export function MessagingSocketProvider({ darkMode, children }) {
       callRingTimeoutRef.current = setTimeout(() => {
         const c = activeCallRef.current;
         if (c && c.call.id === call.id && c.phase === "outgoing") {
-          apiEndCall(call.id).catch(() => {});
+          // If the other person is offline (internet off) the backend also
+          // drops their SIM number into this chat and returns it here.
+          apiEndCall(call.id)
+            .then((ended) => {
+              if (ended && ended.fallbackPhone) {
+                setCallToast(
+                  `${partner.name || "User"} is not available on website app — call on SIM number: ${ended.fallbackPhone}`
+                );
+              }
+            })
+            .catch(() => {});
           setCallToast("No answer");
           cleanupCall();
         }
