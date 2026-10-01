@@ -76,11 +76,12 @@ function buildTag(kind, data) {
   if (kind === "meeting") return `meeting-${data.type}-${data.meetingId || Date.now()}`;
   if (kind === "visitor" || kind === "coworking") return `${kind}-${Date.now()}`;
   if (kind === "birthday") return `birthday-${data.type}-${data.userId || data.clientId || "me"}`;
-  // WhatsApp style: ONE notification per sender that always shows their latest
-  // messages. It is refreshed by posting a FRESH notification (new tag, so the
-  // phone alerts again) and then closing the previous one — updating a
-  // notification in place under the same tag stopped showing new texts after a
-  // few messages on some phones.
+  // Every chat message is its OWN notification (unique tag), so each one sits
+  // on its own line, one below the other, and a new message can never be
+  // swallowed by an "update" of an old notification (in-place updates and
+  // multi-line bodies are not shown reliably by Android Chrome / phone makers'
+  // notification shades). Older ones of the same person are trimmed in
+  // handlePush so the shade never fills up.
   if (data.senderId) return `message-${data.senderId}-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
   return `hopenix-${Date.now()}`;
 }
@@ -113,38 +114,13 @@ async function handlePush(event) {
   const baseTitle =
     data.title || (kind === "call" ? "Incoming call" : kind === "missed" ? "Missed call" : "Hopenix");
   const baseBody = data.body || defaultBody(kind);
-  let title = baseTitle;
-  let body = baseBody;
+  const title = baseTitle;
+  const body = baseBody;
   const tag = buildTag(kind, data);
 
   // A test push must ALWAYS be visible, even while the app is open, or the
   // "did you see it?" check would be meaningless.
   const appFocused = kind === "test" ? false : await isAppFocused();
-
-  // Stack the latest messages of this sender into the one notification:
-  // newest first (so the collapsed banner shows the newest text), up to 4 lines
-  // in the pulled-down view, and a "(N messages)" counter in the title.
-  let lines = [baseBody];
-  let count = 1;
-  let previous = [];
-  if (kind === "message" && data.senderId && !appFocused) {
-    try {
-      previous = (await self.registration.getNotifications()).filter(
-        (n) => n.data && n.data.senderId === data.senderId && classify(n.data) === "message"
-      );
-      previous.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-      const last = previous[0];
-      if (last) {
-        const older = Array.isArray(last.data.lines) && last.data.lines.length ? last.data.lines : [last.body].filter(Boolean);
-        lines = [baseBody, ...older].slice(0, 4);
-        count = (Number(last.data.count) || older.length || 1) + 1;
-      }
-    } catch {
-      /* fine: show just this message */
-    }
-    if (count > 1) title = `${baseTitle} (${count} messages)`;
-    body = lines.join("\n");
-  }
 
   const options = {
     body,
@@ -157,7 +133,7 @@ async function handlePush(event) {
     // browsers otherwise hide it after a few seconds).
     requireInteraction: true,
     timestamp: Date.now(),
-    data: { ...data, lines, count },
+    data: { ...data },
   };
 
   if (appFocused) {
@@ -191,14 +167,18 @@ async function handlePush(event) {
     }
   }
 
-  // The fresh notification now carries the stacked messages: remove the older one(s).
-  previous.forEach((n) => {
+  // Keep only the 4 newest notifications of this sender (WhatsApp shows a few
+  // latest lines, not the whole history); older ones are in the chat anyway.
+  if (kind === "message" && data.senderId) {
     try {
-      n.close();
+      const mine = (await self.registration.getNotifications())
+        .filter((n) => n.data && n.data.senderId === data.senderId && classify(n.data) === "message")
+        .sort((x, y) => (y.timestamp || 0) - (x.timestamp || 0));
+      mine.slice(4).forEach((n) => n.close());
     } catch {
       /* fine */
     }
-  });
+  }
 
   // If the app is open and focused the person already sees the change, so
   // the (silent) notification is removed shortly after.
