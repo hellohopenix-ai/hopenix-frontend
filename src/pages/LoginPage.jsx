@@ -23,7 +23,7 @@ import {
   CheckCircle2,
   XCircle,
 } from "lucide-react";
-import phoenixLogo from "../assets/phoenix-logo.png";
+import BrandImg from "../components/BrandImg.jsx";
 
 /* ===========================================================================
    LoginPage - fully self-contained. It does NOT import or share any brand
@@ -459,7 +459,7 @@ function DashboardPreview() {
       <div className="dashboard-card relative w-[82%] rounded-2xl border border-violet-500/20 bg-[#0f0e1c]/90 backdrop-blur-sm shadow-2xl shadow-black/50 overflow-hidden">
         <div className="flex">
           <div className="flex flex-col items-center gap-4 py-5 px-2.5 bg-[#0b0a16]/70 border-r border-white/5">
-            <img src={phoenixLogo} alt="" className="w-4 h-4 object-contain" />
+            <BrandImg alt="" className="w-4 h-4 object-contain" />
             <LayoutGrid className="w-3.5 h-3.5 text-slate-600" />
             <BarChart3 className="w-3.5 h-3.5 text-slate-600" />
             <Clock className="w-3.5 h-3.5 text-slate-600" />
@@ -503,7 +503,7 @@ function DashboardPreview() {
       <div className="phoenix-corner">
         <div className="phoenix-stack">
           <div className="phoenix-glow-ring" />
-          <img src={phoenixLogo} alt="" className="phoenix-fly" />
+          <BrandImg alt="" className="phoenix-fly" />
           <div className="phoenix-pedestal-ring" />
           <div className="phoenix-pedestal-glow" />
         </div>
@@ -524,8 +524,8 @@ function BrandPanel({ navigate }) {
         className="flex items-center gap-3 mb-5 sm:mb-6"
         aria-label="Hopenix home"
       >
-        <img
-          src={phoenixLogo}
+        <BrandImg
+          
           alt="Hopenix"
           className="w-9 h-9 object-contain drop-shadow-[0_0_12px_rgba(139,92,246,0.5)]"
         />

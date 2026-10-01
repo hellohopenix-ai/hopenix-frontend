@@ -1343,6 +1343,94 @@ export function AuthProvider({ children }) {
     }
   }
 
+  /* ---- Notifications: live status + real test ------------------------- */
+  async function getNotificationStatus() {
+    try {
+      const data = await apiFetch("/notifications/status/", {}, SETTINGS_API_BASE_URL);
+      return { success: true, data };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  /** Sends a real notification to the logged-in user (in-app + browser push)
+   *  and reports what actually happened. */
+  async function sendTestNotification() {
+    try {
+      const data = await apiFetch("/notifications/test/", { method: "POST" }, SETTINGS_API_BASE_URL);
+      return { success: true, data };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  /* ---- Departments: the real ones (built from the people in the system) - */
+  function departmentFromBackend(d) {
+    return {
+      id: d.id,
+      name: d.name,
+      head: d.head || "",
+      headId: d.head_id ?? null,
+      members: d.members ?? 0,
+      totalUsers: d.total_users ?? 0,
+      budget: Number(d.budget) || 0,
+    };
+  }
+
+  async function getDepartments() {
+    try {
+      const data = await apiFetch("/departments/", {}, SETTINGS_API_BASE_URL);
+      return { success: true, data: (Array.isArray(data) ? data : []).map(departmentFromBackend) };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  async function createDepartment({ name, headId, budget }) {
+    try {
+      const data = await apiFetch(
+        "/departments/",
+        { method: "POST", body: JSON.stringify({ name, head_id: headId || null, budget: budget || 0 }) },
+        SETTINGS_API_BASE_URL
+      );
+      return { success: true, data: departmentFromBackend(data) };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  async function updateDepartment(id, { name, headId, budget }) {
+    try {
+      const data = await apiFetch(
+        `/departments/${id}/`,
+        { method: "PATCH", body: JSON.stringify({ name, head_id: headId || null, budget: budget || 0 }) },
+        SETTINGS_API_BASE_URL
+      );
+      return { success: true, data: departmentFromBackend(data) };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  async function deleteDepartment(id) {
+    try {
+      await apiFetch(`/departments/${id}/`, { method: "DELETE" }, SETTINGS_API_BASE_URL);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  /* ---- Storage: what is really stored (admin only) ---------------------- */
+  async function getStorageUsage(refresh = false) {
+    try {
+      const data = await apiFetch(`/storage/${refresh ? "?refresh=1" : ""}`, {}, SETTINGS_API_BASE_URL);
+      return { success: true, data };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
   async function getSecuritySettings() {
     try {
       const data = await apiFetch("/security/", {}, SETTINGS_API_BASE_URL);
@@ -1373,18 +1461,31 @@ export function AuthProvider({ children }) {
   function billingFromBackend(data) {
     if (!data) return null;
     return {
-      plan: data.plan_name,
-      cardLast4: data.card_last4,
-      cardBrand: data.card_brand,
+      plan: data.plan_name || "",
+      price: Number(data.price) || 0,
+      cardLast4: data.card_last4 || "",
+      cardBrand: data.card_brand || "",
+      cardExpiry: data.card_expiry || "",
+      nextBillingDate: data.next_billing_date || "",
+      storageLimitGb: Number(data.storage_limit_gb) || 0,
+      features: Array.isArray(data.features) ? data.features : [],
+      plans: Array.isArray(data.plans) ? data.plans : [],
+      history: Array.isArray(data.history) ? data.history : [],
     };
   }
 
-  function billingToBackend(billing) {
-    return {
-      plan_name: billing.plan,
-      card_last4: billing.cardLast4,
-      card_brand: billing.cardBrand,
-    };
+  // Only what the admin can actually change goes up. Price / storage limit /
+  // renewal date / history are decided by the server. Only the masked card
+  // (last 4 + brand + expiry) is ever sent - never a full number or CVV.
+  function billingToBackend(changes) {
+    const body = {};
+    if (changes.plan) body.plan_name = changes.plan;
+    if (changes.cardLast4) {
+      body.card_last4 = changes.cardLast4;
+      body.card_brand = changes.cardBrand || "Card";
+      if (changes.cardExpiry) body.card_expiry = changes.cardExpiry;
+    }
+    return body;
   }
 
   async function getBillingInfo() {
@@ -1396,11 +1497,11 @@ export function AuthProvider({ children }) {
     }
   }
 
-  async function updateBillingInfo(billing) {
+  async function updateBillingInfo(changes) {
     try {
       const data = await apiFetch(
         "/billing/",
-        { method: "PUT", body: JSON.stringify(billingToBackend(billing)) },
+        { method: "PUT", body: JSON.stringify(billingToBackend(changes)) },
         SETTINGS_API_BASE_URL
       );
       return { success: true, data: billingFromBackend(data) };
@@ -1962,6 +2063,13 @@ export function AuthProvider({ children }) {
         updateCompanySettings,
         getNotificationPreferences,
         updateNotificationPreferences,
+        getNotificationStatus,
+        sendTestNotification,
+        getDepartments,
+        createDepartment,
+        updateDepartment,
+        deleteDepartment,
+        getStorageUsage,
         getSecuritySettings,
         updateSecuritySettings,
         getBillingInfo,

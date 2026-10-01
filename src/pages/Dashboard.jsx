@@ -60,7 +60,7 @@ import {
 /* ------------------------------------------------------------------ */
 /*  The Hopenix eagle logo - already sitting in src/assets/.            */
 /* ------------------------------------------------------------------ */
-import logo from "../assets/phoenix-logo.png";
+import BrandImg from "../components/BrandImg.jsx";
 import birthdayTune from "../assets/happy-birthday-voice.mp3";
 import MessagesPage, { sendReportMessage } from "./MessagesPage";
 import {
@@ -2638,7 +2638,7 @@ export default function Dashboard() {
             }}
           >
             <span className="w-8 h-8 rounded-xl bg-white/5 flex items-center justify-center overflow-hidden shrink-0">
-              <img src={logo} alt="Hopenix logo" className="w-full h-full object-contain" />
+              <BrandImg alt="Hopenix logo" className="w-full h-full object-contain" />
             </span>
             {!sidebarCollapsed && (
               <span className="text-base font-bold text-white tracking-wide whitespace-nowrap">

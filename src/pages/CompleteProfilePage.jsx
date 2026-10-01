@@ -26,7 +26,7 @@ import {
   Code2,
   Camera,
 } from "lucide-react";
-import phoenixLogo from "../assets/phoenix-logo.png";
+import BrandImg from "../components/BrandImg.jsx";
 
 /* ----------------------------------------------------------------------
    REAL BACKEND CALL — POST /api/auth/complete-profile/ as multipart
@@ -957,8 +957,8 @@ export default function CompleteProfilePage() {
             className="flex items-center gap-3"
             aria-label="Hopenix home"
           >
-            <img
-              src={phoenixLogo}
+            <BrandImg
+              
               alt="Hopenix"
               className="w-8 h-8 object-contain drop-shadow-[0_0_12px_rgba(139,92,246,0.5)]"
             />

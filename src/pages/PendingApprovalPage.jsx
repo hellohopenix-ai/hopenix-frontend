@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../AuthContext.jsx";
 import { Clock, LogOut, RefreshCw, XCircle, ShieldCheck } from "lucide-react";
-import phoenixLogo from "../assets/phoenix-logo.png";
+import BrandImg from "../components/BrandImg.jsx";
 
 /* ===========================================================================
    PendingApprovalPage - shown to a user who is logged in but whose account
@@ -51,8 +51,8 @@ export default function PendingApprovalPage() {
 
       <div className="w-full max-w-md bg-[#0d0c18] border border-[#232134] rounded-3xl p-8 shadow-2xl text-center">
         <div className="flex items-center justify-center gap-2.5 mb-8">
-          <img
-            src={phoenixLogo}
+          <BrandImg
+            
             alt="Hopenix"
             className="w-8 h-8 object-contain drop-shadow-[0_0_12px_rgba(139,92,246,0.5)]"
           />

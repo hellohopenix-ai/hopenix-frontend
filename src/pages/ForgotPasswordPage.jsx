@@ -19,7 +19,7 @@ import {
   XCircle,
   PartyPopper,
 } from "lucide-react";
-import phoenixLogo from "../assets/phoenix-logo.png";
+import BrandImg from "../components/BrandImg.jsx";
 
 /* ===========================================================================
    ForgotPasswordPage - fully self-contained, matching the same dark
@@ -243,8 +243,8 @@ function PhoenixHero() {
     <div className="relative mt-8 sm:mt-10 flex flex-col items-center justify-end w-full max-w-xs sm:max-w-sm mx-auto pb-4">
       <div className="phoenix-stage relative w-full flex flex-col items-center">
         <div className="phoenix-ambient-glow" />
-        <img
-          src={phoenixLogo}
+        <BrandImg
+          
           alt="Hopenix phoenix"
           className="phoenix-hero-img relative z-10 w-40 h-40 xs:w-48 xs:h-48 sm:w-56 sm:h-56 md:w-60 md:h-60 object-contain"
         />
@@ -269,8 +269,8 @@ function BrandPanel({ navigate }) {
         className="flex items-center gap-3 mb-5 sm:mb-6"
         aria-label="Hopenix home"
       >
-        <img
-          src={phoenixLogo}
+        <BrandImg
+          
           alt="Hopenix"
           className="w-8 h-8 sm:w-9 sm:h-9 object-contain drop-shadow-[0_0_12px_rgba(139,92,246,0.5)]"
         />

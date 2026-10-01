@@ -17,6 +17,7 @@ import TermsOfServicePage from "./pages/TermsOfServicePage.jsx";
 import ClientPortal from "./pages/ClientPortal.jsx";
 import ClientIntakeForm from "./pages/ClientIntakeForm.jsx";
 import ZipFilesPage from "./pages/ZipFilesPage.jsx";
+import "./brand.js"; // fetches the company logo (Settings -> General) for every page
 import "./index.css";
 
 ReactDOM.createRoot(document.getElementById("root")).render(

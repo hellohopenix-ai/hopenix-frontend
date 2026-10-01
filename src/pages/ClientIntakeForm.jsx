@@ -16,7 +16,7 @@ import {
   Loader2,
   ImageIcon,
 } from "lucide-react";
-import phoenixLogo from "../assets/phoenix-logo.png";
+import BrandImg from "../components/BrandImg.jsx";
 // STEP 7 of the real-backend rollout: this public form now also
 // dual-writes to Postgres (dashboard.IntakeRequest) alongside its
 // existing localStorage flow. See ClientsPage.jsx (Steps 2-4) and
@@ -289,7 +289,7 @@ export default function ClientIntakeForm() {
         {/* brand header */}
         <div className="flex items-center gap-3 justify-center mb-6">
           <div className="w-11 h-11 rounded-xl bg-white/5 flex items-center justify-center shrink-0 overflow-hidden">
-            <img src={phoenixLogo} alt={`${BRAND_NAME} logo`} className="w-full h-full object-contain p-1.5" />
+            <BrandImg alt={`${BRAND_NAME} logo`} className="w-full h-full object-contain p-1.5" />
           </div>
           <div>
             <p className="text-lg font-extrabold text-white leading-tight">{BRAND_NAME}</p>

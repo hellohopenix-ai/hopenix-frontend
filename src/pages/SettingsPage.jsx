@@ -1,5 +1,7 @@
 import React, { useRef, useState, useEffect, useContext, createContext } from "react";
 import { useAuth } from "../AuthContext.jsx";
+import { useBrand, DEFAULT_LOGO, uploadCompanyLogo, removeCompanyLogo } from "../brand.js";
+import { ensurePushSubscribed } from "../pushSubscription.js";
 import {
   Settings as SettingsIcon,
   User,
@@ -129,13 +131,7 @@ function statusToDisplay(status) {
   return "Inactive";
 }
 
-const DEFAULT_DEPARTMENTS = [
-  { id: 1, name: "Management", head: "Hamna Jameel", members: 4, budget: 500000 },
-  { id: 2, name: "Development", head: "Sara Khan", members: 12, budget: 1200000 },
-  { id: 3, name: "Design", head: "Bilal Ahmed", members: 6, budget: 600000 },
-  { id: 4, name: "Sales", head: "Ali Raza", members: 8, budget: 800000 },
-  { id: 5, name: "Marketing", head: "Ayesha Tariq", members: 5, budget: 450000 },
-];
+const DEFAULT_DEPARTMENTS = []; // real ones are loaded from the backend
 
 const DEFAULT_PROJECT_SETTINGS = {
   defaultView: "Kanban Board",
@@ -200,12 +196,12 @@ const DEFAULT_SALES_SETTINGS = {
 };
 
 const DEFAULT_NOTIFICATIONS = [
-  { id: 1, label: "Task Assigned", email: true, push: true, sms: false },
-  { id: 2, label: "Task Completed", email: true, push: false, sms: false },
-  { id: 3, label: "Project Update", email: true, push: true, sms: false },
-  { id: 4, label: "Invoice Paid", email: true, push: true, sms: true },
-  { id: 5, label: "New Message", email: false, push: true, sms: false },
-  { id: 6, label: "System Alerts", email: true, push: true, sms: true },
+  { id: "task_assigned", label: "Task Assigned", email: true, push: true, sms: false },
+  { id: "task_completed", label: "Task Completed", email: true, push: false, sms: false },
+  { id: "project_update", label: "Project Update", email: true, push: true, sms: false },
+  { id: "invoice_paid", label: "Invoice Paid", email: true, push: true, sms: true },
+  { id: "new_message", label: "New Message", email: false, push: true, sms: false },
+  { id: "system_alerts", label: "System Alerts", email: true, push: true, sms: true },
 ];
 
 const DEFAULT_SECURITY = {
@@ -217,22 +213,29 @@ const DEFAULT_SECURITY = {
   ],
 };
 
+// Billing is entirely server-driven (GET /api/settings/billing/): plan, price,
+// storage allowance, renewal date, plan catalog and history all come from the
+// backend. This is just the empty shape shown until the first response lands.
 const DEFAULT_BILLING = {
-  plan: "Business",
-  cardLast4: "4242",
-  cardBrand: "Visa",
-  history: [
-    { id: 1, date: "May 1, 2025", desc: "Business Plan - Monthly", amount: "₨ 24,999", status: "Paid" },
-    { id: 2, date: "Apr 1, 2025", desc: "Business Plan - Monthly", amount: "₨ 24,999", status: "Paid" },
-    { id: 3, date: "Mar 1, 2025", desc: "Business Plan - Monthly", amount: "₨ 24,999", status: "Paid" },
-  ],
+  plan: "",
+  price: 0,
+  cardLast4: "",
+  cardBrand: "",
+  cardExpiry: "",
+  nextBillingDate: "",
+  storageLimitGb: 0,
+  features: [],
+  plans: [],
+  history: [],
 };
 
-const PLANS = [
-  { name: "Starter", price: "₨9,999/mo", features: ["10 Projects", "20 Users", "Basic AI Assistant", "Email Support"] },
-  { name: "Business", price: "₨24,999/mo", features: ["Unlimited Projects", "Unlimited Users", "AI Assistant (Advanced)", "Priority Support"] },
-  { name: "Enterprise", price: "Custom", features: ["Everything in Business", "Dedicated Manager", "Custom Integrations", "SLA & Onboarding"] },
-];
+const formatMoney = (n) => (Number(n) > 0 ? `₨ ${Number(n).toLocaleString()}` : "—");
+const formatPlanPrice = (p) => (p?.price ? `₨${Number(p.price).toLocaleString()}/mo` : "Custom");
+const formatDate = (iso) => {
+  if (!iso) return "—";
+  const d = new Date(`${String(iso).slice(0, 10)}T00:00:00`);
+  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+};
 
 const SYSTEM_LOGS = [
   { id: 1, level: "info", message: "Backup completed successfully", time: "Today, 03:00 AM" },
@@ -243,12 +246,14 @@ const SYSTEM_LOGS = [
   { id: 6, level: "warning", message: "Unusual login location detected", time: "May 19, 2025" },
 ];
 
-const STORAGE_BREAKDOWN = [
-  { label: "Documents", size: 1.1, color: "#7c3aed" },
-  { label: "Images", size: 0.75, color: "#0ea5e9" },
-  { label: "Backups", size: 0.4, color: "#059669" },
-  { label: "Other", size: 0.2, color: "#64748b" },
-];
+// Real storage numbers come from the backend (GET /api/settings/storage/).
+function formatBytes(bytes) {
+  const n = Number(bytes) || 0;
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 ** 2) return `${(n / 1024).toFixed(1)} KB`;
+  if (n < 1024 ** 3) return `${(n / 1024 ** 2).toFixed(1)} MB`;
+  return `${(n / 1024 ** 3).toFixed(2)} GB`;
+}
 
 function loadJSON(key, fallback) {
   try {
@@ -535,6 +540,13 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
     updateCompanySettings,
     getNotificationPreferences,
     updateNotificationPreferences,
+    getNotificationStatus,
+    sendTestNotification,
+    getDepartments,
+    createDepartment,
+    updateDepartment,
+    deleteDepartment,
+    getStorageUsage,
     getSecuritySettings,
     updateSecuritySettings,
     getBillingInfo,
@@ -625,7 +637,9 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
     refreshUsers?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const [departments, setDepartments] = useState(() => loadJSON("hopenix_departments", DEFAULT_DEPARTMENTS));
+  const [departments, setDepartments] = useState([]);
+  const [departmentsLoading, setDepartmentsLoading] = useState(true);
+  const [departmentsError, setDepartmentsError] = useState("");
   const [projectSettings, setProjectSettings] = useState(() => loadJSON("hopenix_project_settings", DEFAULT_PROJECT_SETTINGS));
   const [taskSettings, setTaskSettings] = useState(() => loadJSON("hopenix_task_settings", DEFAULT_TASK_SETTINGS));
   const [incomeSettings, setIncomeSettings] = useState(() => loadJSON("hopenix_income_settings", DEFAULT_INCOME_SETTINGS));
@@ -633,7 +647,7 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
   const [salesSettings, setSalesSettings] = useState(() => loadJSON("hopenix_sales_settings", DEFAULT_SALES_SETTINGS));
   const [notifications, setNotifications] = useState(() => loadJSON("hopenix_notifications", DEFAULT_NOTIFICATIONS));
   const [security, setSecurity] = useState(() => loadJSON("hopenix_security", DEFAULT_SECURITY));
-  const [billing, setBilling] = useState(() => loadJSON("hopenix_billing", DEFAULT_BILLING));
+  const [billing, setBilling] = useState(DEFAULT_BILLING);
 
   // Load Company / Notifications / Security(2FA) / Billing from the real
   // backend once, on mount — this OVERRIDES whatever loadJSON() above
@@ -661,7 +675,7 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
       if (secRes.success && secRes.data) {
         setSecurity((s) => ({ ...s, twoFactor: !!secRes.data.two_factor_enabled }));
       }
-      if (billingRes.success && billingRes.data) setBilling((b) => ({ ...b, ...billingRes.data }));
+      if (billingRes.success && billingRes.data) setBilling(billingRes.data);
       if (projRes.success && projRes.data) setProjectSettings((s) => ({ ...s, ...projRes.data }));
       if (taskRes.success && taskRes.data) setTaskSettings((s) => ({ ...s, ...taskRes.data }));
       if (incomeRes.success && incomeRes.data) setIncomeSettings((s) => ({ ...s, ...incomeRes.data }));
@@ -673,7 +687,14 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const [storageUsedGb, setStorageUsedGb] = useState(() => Number(localStorage.getItem("hopenix_storage_used")) || 2.45);
+  const [storage, setStorage] = useState(null); // real numbers from the backend
+  const [storageError, setStorageError] = useState("");
+  const [storageLoading, setStorageLoading] = useState(false);
+  const [notifStatus, setNotifStatus] = useState(null);
+  const [notifBusy, setNotifBusy] = useState(false);
+  const [logoBusy, setLogoBusy] = useState(false);
+  const brand = useBrand();
+  const logoInputRef = useRef(null);
 
   const [saved, setSaved] = useState(false);
   const [avatarError, setAvatarError] = useState("");
@@ -693,6 +714,109 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
   function showToast(msg) {
     setToast(msg);
     setTimeout(() => setToast(""), 2400);
+  }
+
+  /* ---------------- Real departments ---------------- */
+  async function loadDepartments() {
+    const res = await getDepartments();
+    if (res.success) {
+      setDepartments(res.data);
+      setDepartmentsError("");
+    } else {
+      setDepartmentsError(res.error || "Couldn't load departments.");
+    }
+    setDepartmentsLoading(false);
+  }
+  useEffect(() => {
+    loadDepartments();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /* ---------------- Real storage (admin only) ---------------- */
+  async function loadStorage(refresh = false) {
+    if (!hasFullSettingsAccess) return;
+    setStorageLoading(true);
+    const res = await getStorageUsage(refresh);
+    if (res.success) {
+      setStorage(res.data);
+      setStorageError("");
+    } else {
+      setStorageError(res.error || "Couldn't read storage usage.");
+    }
+    setStorageLoading(false);
+  }
+  useEffect(() => {
+    loadStorage();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasFullSettingsAccess]);
+
+  /* ---------------- Notifications ---------------- */
+  async function loadNotifStatus() {
+    const res = await getNotificationStatus();
+    if (res.success) setNotifStatus(res.data);
+  }
+  useEffect(() => {
+    if (tab === "notifications") loadNotifStatus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
+
+  // Every toggle saves immediately (no need to remember "Save Changes").
+  async function toggleNotification(id, channel, value) {
+    const next = notifications.map((x) => (x.id === id ? { ...x, [channel]: value } : x));
+    setNotifications(next);
+    saveJSON("hopenix_notifications", next);
+    const res = await updateNotificationPreferences(next);
+    if (res?.success === false) showToast(res.error || "Couldn't save — check your connection");
+  }
+
+  async function enableBrowserNotifications() {
+    setNotifBusy(true);
+    let result;
+    try {
+      // prompt:true = ask for permission right now (we're inside a tap/click)
+      result = await ensurePushSubscribed({ prompt: true });
+    } finally {
+      await loadNotifStatus();
+      setNotifBusy(false);
+    }
+    showToast(result?.ok ? "Notifications enabled on this device" : result?.message || "Couldn't enable notifications");
+  }
+
+  async function runNotificationTest() {
+    setNotifBusy(true);
+    const res = await sendTestNotification();
+    setNotifBusy(false);
+    showToast(res.success ? res.data.message : res.error || "Test failed");
+    loadNotifStatus();
+  }
+
+  /* ---------------- Company logo ---------------- */
+  async function handleLogoPick(e) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (!/^image\//.test(file.type)) return showToast("Please choose an image file");
+    if (file.size > 2 * 1024 * 1024) return showToast("Logo must be 2MB or smaller");
+    setLogoBusy(true);
+    try {
+      await uploadCompanyLogo(file);
+      showToast("Logo updated everywhere");
+    } catch (err) {
+      showToast(err.message || "Couldn't upload the logo");
+    } finally {
+      setLogoBusy(false);
+    }
+  }
+  async function handleLogoRemove() {
+    setLogoBusy(true);
+    try {
+      await removeCompanyLogo();
+      showToast("Logo reset to default");
+    } catch (err) {
+      showToast(err.message || "Couldn't remove the logo");
+    } finally {
+      setLogoBusy(false);
+    }
   }
 
   function closeModal() {
@@ -794,7 +918,6 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
       updateCompanySettings(company),
       updateNotificationPreferences(notifications),
       updateSecuritySettings({ two_factor_enabled: security.twoFactor }),
-      updateBillingInfo(billing),
       updateProjectSettings(projectSettings),
       updateTaskSettings(taskSettings),
       updateIncomeSettings(incomeSettings),
@@ -812,7 +935,6 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
     // immediately (see the Users & Roles tab below), same as everywhere
     // else admin actions happen in this app. There's no local draft state
     // left to persist for that tab.
-    saveJSON("hopenix_departments", departments);
     saveJSON("hopenix_project_settings", projectSettings);
     saveJSON("hopenix_task_settings", taskSettings);
     saveJSON("hopenix_income_settings", incomeSettings);
@@ -820,8 +942,6 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
     saveJSON("hopenix_sales_settings", salesSettings);
     saveJSON("hopenix_notifications", notifications);
     saveJSON("hopenix_security", security);
-    saveJSON("hopenix_billing", billing);
-    localStorage.setItem("hopenix_storage_used", String(storageUsedGb));
     setSaved(true);
     setTimeout(() => setSaved(false), 2200);
   }
@@ -832,7 +952,6 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
     // Users & Roles is real backend data now — nothing local to reset it
     // to, and doing so would just mismatch the display from the actual
     // database until the next refreshUsers() call anyway.
-    setDepartments(DEFAULT_DEPARTMENTS);
     setProjectSettings(DEFAULT_PROJECT_SETTINGS);
     setTaskSettings(DEFAULT_TASK_SETTINGS);
     setIncomeSettings(DEFAULT_INCOME_SETTINGS);
@@ -841,19 +960,17 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
     setNotifications(DEFAULT_NOTIFICATIONS);
     setSecurity(DEFAULT_SECURITY);
     setBilling(DEFAULT_BILLING);
-    setStorageUsedGb(2.45);
     [
-      "hopenix_company", "hopenix_profile", "hopenix_users", "hopenix_departments", "hopenix_project_settings",
+      "hopenix_company", "hopenix_profile", "hopenix_users", "hopenix_project_settings",
       "hopenix_task_settings", "hopenix_income_settings", "hopenix_expense_settings", "hopenix_sales_settings",
       "hopenix_notifications", "hopenix_security", "hopenix_billing",
-      "hopenix_storage_used",
     ].forEach((k) => localStorage.removeItem(k));
     closeConfirm();
     showToast("All settings reset to default");
   }
 
   function downloadInvoice(row) {
-    const text = `HOPENIX TECHNOLOGIES\nInvoice: ${row.desc}\nDate: ${row.date}\nAmount: ${row.amount}\nStatus: ${row.status}\n`;
+    const text = `${(company.name || "HOPENIX").toUpperCase()}\nInvoice #${row.id}\nDescription: ${row.description}\nDate: ${formatDate(row.date)}\nAmount: ${formatMoney(row.amount)}\nStatus: ${row.status}\n`;
     const blob = new Blob([text], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -876,7 +993,7 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
     (u) => u.name.toLowerCase().includes(userSearch.toLowerCase()) || u.email.toLowerCase().includes(userSearch.toLowerCase())
   );
   const filteredLogs = logFilter === "all" ? SYSTEM_LOGS : SYSTEM_LOGS.filter((l) => l.level === logFilter);
-  const storagePct = Math.min(100, Math.round((storageUsedGb / 10) * 100));
+  const storagePct = storage ? Math.min(100, Math.max(storage.used_bytes > 0 ? 1 : 0, Math.round(storage.percent || 0))) : 0;
 
   const saveBtn = (
     <button
@@ -941,20 +1058,34 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
                       <span className="block text-[11px] font-medium mb-1.5 text-slate-500 dark:text-slate-400">Company Logo</span>
                       <div className="flex items-center gap-3">
                         <span className={`w-14 h-14 rounded-xl flex items-center justify-center shrink-0 overflow-hidden ${darkMode ? "bg-slate-800" : "bg-violet-50"}`}>
-                          <SettingsIcon size={20} className="text-violet-500" />
+                          <img src={brand.logo || DEFAULT_LOGO} alt="Company logo" className="w-full h-full object-contain p-1" />
                         </span>
                         <div>
                           <p className={`text-[10.5px] ${subtleText}`}>Recommended size: 200x200px</p>
                           <p className={`text-[10.5px] ${subtleText}`}>PNG, JPG or SVG. Max size 2MB</p>
-                          <button
-                            type="button"
-                            onClick={() => showToast("Logo upload coming soon")}
-                            className={`mt-1.5 text-[11px] font-semibold rounded-md px-2.5 py-1 border ${
-                              darkMode ? "border-slate-700 text-slate-300 hover:bg-slate-800" : "border-slate-200 text-slate-600 hover:bg-slate-50"
-                            }`}
-                          >
-                            Change Logo
-                          </button>
+                          <div className="flex items-center gap-1.5 mt-1.5">
+                            <button
+                              type="button"
+                              disabled={logoBusy}
+                              onClick={() => logoInputRef.current?.click()}
+                              className={`text-[11px] font-semibold rounded-md px-2.5 py-1 border disabled:opacity-60 ${
+                                darkMode ? "border-slate-700 text-slate-300 hover:bg-slate-800" : "border-slate-200 text-slate-600 hover:bg-slate-50"
+                              }`}
+                            >
+                              {logoBusy ? "Uploading..." : "Change Logo"}
+                            </button>
+                            {brand.logo && (
+                              <button
+                                type="button"
+                                disabled={logoBusy}
+                                onClick={handleLogoRemove}
+                                className="text-[11px] font-semibold rounded-md px-2.5 py-1 text-rose-500 hover:bg-rose-500/10 disabled:opacity-60"
+                              >
+                                Remove
+                              </button>
+                            )}
+                            <input ref={logoInputRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml" onChange={handleLogoPick} className="hidden" />
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -1218,17 +1349,21 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
           <div className={`rounded-xl ${company.compactMode ? "p-3 sm:p-3.5" : "p-4 sm:p-5"} shadow-sm ${card}`}>
             <SectionHeading
               title="Departments"
-              subtitle={`${departments.length} departments · organize your teams`}
+              subtitle={departmentsLoading ? "Loading departments..." : `${departments.length} department${departments.length === 1 ? "" : "s"} · from the people in your workspace`}
               darkMode={darkMode}
-              action={
+              action={hasFullSettingsAccess && (
                 <button
                   onClick={() => setModal({ type: "department", data: null })}
                   className="flex items-center gap-1.5 bg-gradient-to-r from-violet-600 to-indigo-600 text-white rounded-lg px-3.5 py-2 text-xs font-semibold shadow-sm hover:opacity-90 transition"
                 >
                   <Plus size={13} /> Add Department
                 </button>
-              }
+              )}
             />
+            {departmentsError && <p className="mt-3 text-[11.5px] text-rose-500">{departmentsError}</p>}
+            {!departmentsLoading && !departmentsError && departments.length === 0 && (
+              <p className={`mt-4 text-[12px] ${subtleText}`}>No departments yet. Add one, or assign a department to a user and it will show up here.</p>
+            )}
             <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
               {departments.map((d) => (
                 <div key={d.id} className={`rounded-lg p-3.5 border ${darkMode ? "border-slate-800 bg-slate-800/40" : "border-slate-100 bg-slate-50"}`}>
@@ -1239,9 +1374,10 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
                       </span>
                       <span className="min-w-0">
                         <span className={`block text-[12.5px] font-semibold truncate ${cardText}`}>{d.name}</span>
-                        <span className={`block text-[10.5px] truncate ${subtleText}`}>Head: {d.head}</span>
+                        <span className={`block text-[10.5px] truncate ${subtleText}`}>Head: {d.head || "Not assigned"}</span>
                       </span>
                     </div>
+                    {hasFullSettingsAccess && (
                     <div className="flex items-center gap-0.5 shrink-0">
                       <IconBtn icon={Pencil} darkMode={darkMode} title="Edit" onClick={() => setModal({ type: "department", data: d })} />
                       <IconBtn
@@ -1252,22 +1388,30 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
                         onClick={() =>
                           setConfirm({
                             title: "Delete department",
-                            message: `Delete "${d.name}"? Members will need to be reassigned.`,
+                            message: d.totalUsers > 0
+                              ? `"${d.name}" still has ${d.totalUsers} user${d.totalUsers === 1 ? "" : "s"}. Move them to another department first — it can't be deleted while anyone is in it.`
+                              : `Delete "${d.name}"?`,
                             danger: true,
                             confirmLabel: "Delete",
-                            onConfirm: () => {
-                              setDepartments((list) => list.filter((x) => x.id !== d.id));
+                            onConfirm: async () => {
+                              const res = await deleteDepartment(d.id);
                               closeConfirm();
-                              showToast("Department deleted");
+                              if (res.success) {
+                                setDepartments((list) => list.filter((x) => x.id !== d.id));
+                                showToast("Department deleted");
+                              } else {
+                                showToast(res.error || "Couldn't delete the department");
+                              }
                             },
                           })
                         }
                       />
                     </div>
+                    )}
                   </div>
                   <div className={`flex items-center justify-between mt-3 pt-2.5 border-t text-[11px] ${borderClass} ${mutedText}`}>
-                    <span>{d.members} members</span>
-                    <span className="font-semibold">₨ {d.budget.toLocaleString()} / mo</span>
+                    <span>{d.members} member{d.members === 1 ? "" : "s"}</span>
+                    <span className="font-semibold">{d.budget > 0 ? `₨ ${d.budget.toLocaleString()} / mo` : "No budget set"}</span>
                   </div>
                 </div>
               ))}
@@ -1419,7 +1563,44 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
         {/* ---------------------------------------------- Notifications */}
         {tab === "notifications" && (
           <div className={`rounded-xl ${company.compactMode ? "p-3 sm:p-3.5" : "p-4 sm:p-5"} shadow-sm ${card}`}>
-            <SectionHeading title="Notifications" subtitle="Choose how you're notified for each event." darkMode={darkMode} action={saveBtn} />
+            <SectionHeading title="Notifications" subtitle="Choose how you're notified for each event. Changes save instantly." darkMode={darkMode} />
+            <div className={`mt-4 rounded-lg p-3 border flex flex-wrap items-center justify-between gap-3 ${darkMode ? "border-slate-800 bg-slate-800/40" : "border-slate-100 bg-slate-50"}`}>
+              <div className="min-w-0">
+                <p className={`text-[12px] font-semibold ${cardText}`}>
+                  {!notifStatus
+                    ? "Checking push status..."
+                    : !notifStatus.push_configured
+                    ? "Push isn't set up on the server"
+                    : notifStatus.devices > 0
+                    ? `Push is on for ${notifStatus.devices} of your device${notifStatus.devices === 1 ? "" : "s"}`
+                    : "Push isn't enabled on this device yet"}
+                </p>
+                <p className={`text-[10.5px] mt-0.5 ${subtleText}`}>
+                  {notifStatus && !notifStatus.push_configured
+                    ? notifStatus.push_problem || "Ask your developer to set the VAPID keys in the backend settings."
+                    : "Email is sent only when \"Allow Email Notifications\" is on in General."}
+                  {notifStatus && !notifStatus.company_email_enabled ? " It is currently OFF, so no emails are being sent." : ""}
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {notifStatus?.push_configured && (
+                  <button
+                    disabled={notifBusy}
+                    onClick={enableBrowserNotifications}
+                    className={`text-[11px] font-semibold rounded-md px-3 py-1.5 border disabled:opacity-60 ${darkMode ? "border-slate-700 text-slate-300 hover:bg-slate-800" : "border-slate-200 text-slate-600 hover:bg-white"}`}
+                  >
+                    Enable on this device
+                  </button>
+                )}
+                <button
+                  disabled={notifBusy}
+                  onClick={runNotificationTest}
+                  className="text-[11px] font-semibold rounded-md px-3 py-1.5 text-white bg-gradient-to-r from-violet-600 to-indigo-600 hover:opacity-90 disabled:opacity-60"
+                >
+                  {notifBusy ? "Working..." : "Send test notification"}
+                </button>
+              </div>
+            </div>
             <div className="mt-4 overflow-x-auto">
               <table className="w-full text-left border-collapse min-w-[420px]">
                 <thead>
@@ -1427,7 +1608,7 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
                     <th className="py-2 font-semibold">Event</th>
                     <th className="py-2 font-semibold text-center w-20">Email</th>
                     <th className="py-2 font-semibold text-center w-20">Push</th>
-                    <th className="py-2 font-semibold text-center w-20">SMS</th>
+                    <th className="py-2 font-semibold text-center w-20" title="SMS delivery needs an SMS provider, which isn't connected yet">SMS*</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1437,7 +1618,7 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
                       {["email", "push", "sms"].map((ch) => (
                         <td key={ch} className="py-2.5 text-center">
                           <div className="flex justify-center">
-                            <Toggle checked={n[ch]} onChange={(v) => setNotifications((list) => list.map((x) => (x.id === n.id ? { ...x, [ch]: v } : x)))} />
+                            <Toggle checked={n[ch]} onChange={(v) => toggleNotification(n.id, ch, v)} />
                           </div>
                         </td>
                       ))}
@@ -1446,6 +1627,7 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
                 </tbody>
               </table>
             </div>
+            <p className={`mt-3 text-[10.5px] ${subtleText}`}>* SMS choices are saved, but text messages can't be sent until an SMS provider is connected.</p>
           </div>
         )}
 
@@ -1632,13 +1814,14 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
                 <div>
                   <p className={`text-[11px] ${subtleText}`}>Current Plan</p>
                   <p className={`text-sm font-bold flex items-center gap-1.5 mt-0.5 ${cardText}`}>
-                    <Crown size={14} className="text-amber-500" /> {billing.plan} Plan
+                    <Crown size={14} className="text-amber-500" /> {billing.plan ? `${billing.plan} Plan` : "No plan selected"}
                   </p>
+                  {billing.plan && <p className={`text-[10.5px] mt-0.5 ${subtleText}`}>{billing.price ? `${formatMoney(billing.price)} / month` : "Custom pricing"}{billing.nextBillingDate ? ` · renews ${formatDate(billing.nextBillingDate)}` : ""}</p>}
                 </div>
                 <div>
                   <p className={`text-[11px] ${subtleText}`}>Payment Method</p>
                   <div className="flex items-center gap-2 mt-0.5">
-                    <p className={`text-sm font-bold ${cardText}`}>{billing.cardBrand} •••• {billing.cardLast4}</p>
+                    <p className={`text-sm font-bold ${cardText}`}>{billing.cardLast4 ? `${billing.cardBrand || "Card"} •••• ${billing.cardLast4}` : "No card on file"}</p>
                     <button onClick={() => setModal({ type: "payment" })} className="text-[11px] font-semibold text-violet-500 hover:text-violet-600">
                       Update
                     </button>
@@ -1661,11 +1844,16 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
                     </tr>
                   </thead>
                   <tbody>
+                    {billing.history.length === 0 && (
+                      <tr className={`border-t ${borderClass}`}>
+                        <td colSpan={5} className={`py-6 text-center text-[11.5px] ${subtleText}`}>No billing activity yet. Plan and payment-method changes will appear here.</td>
+                      </tr>
+                    )}
                     {billing.history.map((row) => (
                       <tr key={row.id} className={`border-t ${borderClass}`}>
-                        <td className={`py-2.5 text-[11.5px] ${mutedText}`}>{row.date}</td>
-                        <td className={`py-2.5 text-[11.5px] font-medium ${cardText}`}>{row.desc}</td>
-                        <td className={`py-2.5 text-[11.5px] ${mutedText}`}>{row.amount}</td>
+                        <td className={`py-2.5 text-[11.5px] ${mutedText}`}>{formatDate(row.date)}</td>
+                        <td className={`py-2.5 text-[11.5px] font-medium ${cardText}`}>{row.description}</td>
+                        <td className={`py-2.5 text-[11.5px] ${mutedText}`}>{formatMoney(row.amount)}</td>
                         <td className="py-2.5"><Badge tone="emerald" darkMode={darkMode}>{row.status}</Badge></td>
                         <td className="py-2.5 text-right">
                           <IconBtn icon={Download} darkMode={darkMode} title="Download invoice" onClick={() => downloadInvoice(row)} />
@@ -1693,7 +1881,9 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
           </h3>
           <div className="flex items-center justify-between mt-3">
             <span className={`text-[11px] ${mutedText}`}>Company Storage</span>
-            <span className={`text-[10.5px] ${subtleText}`}>{storageUsedGb.toFixed(2)} GB of 10 GB used</span>
+            <span className={`text-[10.5px] ${subtleText}`}>
+              {storage ? `${formatBytes(storage.used_bytes)} of ${formatBytes(storage.limit_bytes)} used` : storageError ? "Unavailable" : "Calculating..."}
+            </span>
           </div>
           <div className={`w-full h-2 rounded-full mt-2 overflow-hidden ${darkMode ? "bg-slate-800" : "bg-slate-100"}`}>
             <div className="h-full rounded-full bg-gradient-to-r from-violet-600 to-indigo-500" style={{ width: `${storagePct}%` }} />
@@ -1704,19 +1894,20 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
           >
             Manage Storage
           </button>
+          {storageError && <p className="text-[10.5px] mt-2 text-rose-500">{storageError}</p>}
         </div>
 
         <div className={`rounded-xl p-4 shadow-sm ${card}`}>
           <h3 className={`text-[12.5px] font-semibold ${cardText}`}>Subscription Plan</h3>
           <div className="flex items-center justify-between mt-3">
             <span className={`flex items-center gap-1.5 text-[12.5px] font-semibold ${cardText}`}>
-              <Crown size={13} className="text-amber-500" /> {billing.plan} Plan
+              <Crown size={13} className="text-amber-500" /> {billing.plan ? `${billing.plan} Plan` : "No plan"}
             </span>
-            <Badge tone="emerald" darkMode={darkMode}>Active</Badge>
+            {billing.plan && <Badge tone="emerald" darkMode={darkMode}>Active</Badge>}
           </div>
-          <p className={`text-[10.5px] mt-1 ${subtleText}`}>Next billing date: Jun 25, 2025</p>
+          <p className={`text-[10.5px] mt-1 ${subtleText}`}>Next billing date: {formatDate(billing.nextBillingDate)}</p>
           <ul className="mt-3 space-y-1.5">
-            {(PLANS.find((p) => p.name === billing.plan)?.features || []).map((f) => (
+            {billing.features.map((f) => (
               <li key={f} className={`flex items-center gap-1.5 text-[11px] ${mutedText}`}>
                 <Check size={12} className="text-emerald-500 shrink-0" /> {f}
               </li>
@@ -1844,14 +2035,14 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
           inputClass={inputClass}
           initial={modal?.data}
           onCancel={closeModal}
-          onSubmit={(data) => {
-            if (modal?.data) {
-              setDepartments((list) => list.map((x) => (x.id === modal.data.id ? { ...x, ...data } : x)));
-              showToast("Department updated");
-            } else {
-              setDepartments((list) => [...list, { id: nextId(list), members: 0, ...data }]);
-              showToast("Department added");
-            }
+          people={users.filter((u) => u._backendStatus === "approved")}
+          onSubmit={async (data) => {
+            const res = modal?.data ? await updateDepartment(modal.data.id, data) : await createDepartment(data);
+            if (!res.success) return res.error || "Couldn't save the department";
+            // renaming also renames it on every user, so re-read both lists
+            await loadDepartments();
+            refreshUsers?.();
+            showToast(modal?.data ? "Department updated" : "Department added");
             closeModal();
           }}
         />
@@ -1882,12 +2073,13 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
       {/* Change plan */}
       <Modal open={modal?.type === "changePlan"} onClose={closeModal} title="Choose a Plan" darkMode={darkMode} widthClass="max-w-2xl">
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          {PLANS.map((p) => {
+          {billing.plans.length === 0 && <p className={`text-[11.5px] sm:col-span-3 ${subtleText}`}>Couldn't load plans from the server. Check your connection and reopen this window.</p>}
+          {billing.plans.map((p) => {
             const isCurrent = p.name === billing.plan;
             return (
               <div key={p.name} className={`rounded-lg p-3.5 border flex flex-col ${isCurrent ? "border-violet-500" : darkMode ? "border-slate-800" : "border-slate-200"}`}>
                 <p className={`text-[12.5px] font-bold ${cardText}`}>{p.name}</p>
-                <p className={`text-[15px] font-extrabold mt-1 ${cardText}`}>{p.price}</p>
+                <p className={`text-[15px] font-extrabold mt-1 ${cardText}`}>{formatPlanPrice(p)}</p>
                 <ul className="mt-2.5 space-y-1.5 flex-1">
                   {p.features.map((f) => (
                     <li key={f} className={`flex items-start gap-1.5 text-[10.5px] ${mutedText}`}>
@@ -1898,20 +2090,15 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
                 <button
                   disabled={isCurrent}
                   onClick={async () => {
-                    // BUG FIX: this used to only call local setBilling(...)
-                    // — nothing on this tab ever actually reached the
-                    // backend (the Billing tab has no "Save Changes"
-                    // button of its own; "Change Plan" is its header
-                    // action instead), so a plan switch always looked
-                    // like it worked (toast + UI update) but silently
-                    // reverted on next login/refresh. Now it saves for
-                    // real, immediately.
-                    const result = await updateBillingInfo({ ...billing, plan: p.name });
+                    // Saved on the server (price, storage limit and renewal date
+                    // are decided there); the response replaces local billing state.
+                    const result = await updateBillingInfo({ plan: p.name });
                     if (result?.success === false) {
                       showToast(result.error || "Couldn't switch plans");
                       return;
                     }
-                    setBilling((b) => ({ ...b, plan: p.name }));
+                    if (result?.data) setBilling(result.data);
+                    loadStorage(true);
                     closeModal();
                     showToast(`Switched to the ${p.name} plan`);
                   }}
@@ -1935,44 +2122,57 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
           darkMode={darkMode}
           inputClass={inputClass}
           onCancel={closeModal}
-          onSubmit={async (last4, brand) => {
-            // Same bug, same fix as Change Plan above — this only ever
-            // did setBilling(...) locally, never actually saved.
-            const result = await updateBillingInfo({ ...billing, cardLast4: last4, cardBrand: brand });
+          onSubmit={async (last4, cardBrand, cardExpiry) => {
+            // Only the masked card (last 4, brand, expiry) is sent — never the
+            // full number or CVV.
+            const result = await updateBillingInfo({ cardLast4: last4, cardBrand, cardExpiry });
             if (result?.success === false) {
               showToast(result.error || "Couldn't update payment method");
               return;
             }
-            setBilling((b) => ({ ...b, cardLast4: last4, cardBrand: brand }));
+            if (result?.data) setBilling(result.data);
             closeModal();
             showToast("Payment method updated");
           }}
         />
       </Modal>
 
-      {/* Storage manager */}
+      {/* Storage manager — real numbers from the backend */}
       <Modal open={modal?.type === "storage"} onClose={closeModal} title="Manage Storage" darkMode={darkMode}>
-        <div className="space-y-2.5">
-          {STORAGE_BREAKDOWN.map((b) => (
-            <div key={b.label}>
-              <div className="flex items-center justify-between mb-1">
-                <span className={`text-[11.5px] font-medium ${cardText}`}>{b.label}</span>
-                <span className={`text-[10.5px] ${subtleText}`}>{b.size.toFixed(2)} GB</span>
-              </div>
-              <div className={`w-full h-1.5 rounded-full overflow-hidden ${darkMode ? "bg-slate-800" : "bg-slate-100"}`}>
-                <div className="h-full rounded-full" style={{ width: `${(b.size / 10) * 100}%`, backgroundColor: b.color }} />
-              </div>
+        {!storage ? (
+          <p className={`text-[11.5px] ${storageError ? "text-rose-500" : subtleText}`}>{storageError || "Calculating storage..."}</p>
+        ) : (
+          <>
+            <div className="flex items-baseline justify-between mb-3">
+              <span className={`text-sm font-bold ${cardText}`}>{formatBytes(storage.used_bytes)} <span className={`text-[11px] font-medium ${subtleText}`}>of {formatBytes(storage.limit_bytes)}</span></span>
+              <span className={`text-[10.5px] ${subtleText}`}>{storage.file_count.toLocaleString()} files · {storage.source}</span>
             </div>
-          ))}
-        </div>
+            <div className="space-y-2.5">
+              {storage.breakdown.map((b) => (
+                <div key={b.key}>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className={`text-[11.5px] font-medium ${cardText}`}>{b.label}</span>
+                    <span className={`text-[10.5px] ${subtleText}`}>{formatBytes(b.bytes)} · {b.files.toLocaleString()} file{b.files === 1 ? "" : "s"}</span>
+                  </div>
+                  <div className={`w-full h-1.5 rounded-full overflow-hidden ${darkMode ? "bg-slate-800" : "bg-slate-100"}`}>
+                    <div className="h-full rounded-full" style={{ width: `${storage.used_bytes ? Math.max(b.bytes ? 2 : 0, (b.bytes / storage.used_bytes) * 100) : 0}%`, backgroundColor: b.color }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+            {storage.note && <p className="text-[10.5px] mt-3 text-amber-500">{storage.note}</p>}
+            <p className={`text-[10.5px] mt-3 ${subtleText}`}>Storage limit comes from your {billing.plan || "current"} plan. Updated {new Date(storage.measured_at * 1000).toLocaleTimeString()}.</p>
+          </>
+        )}
         <button
-          onClick={() => {
-            setStorageUsedGb((v) => Math.max(0, v - 0.6));
-            showToast("Cache and temporary files cleared");
+          disabled={storageLoading}
+          onClick={async () => {
+            await loadStorage(true);
+            showToast("Storage usage refreshed");
           }}
-          className={`mt-4 w-full text-[11px] font-semibold rounded-lg py-2 ${darkMode ? "bg-slate-800 text-violet-300 hover:bg-slate-700" : "bg-violet-50 text-violet-700 hover:bg-violet-100"}`}
+          className={`mt-4 w-full text-[11px] font-semibold rounded-lg py-2 disabled:opacity-60 ${darkMode ? "bg-slate-800 text-violet-300 hover:bg-slate-700" : "bg-violet-50 text-violet-700 hover:bg-violet-100"}`}
         >
-          Clear Cache & Temporary Files
+          {storageLoading ? "Recalculating..." : "Recalculate Now"}
         </button>
       </Modal>
 
@@ -2134,40 +2334,83 @@ function UserForm({ initial, departments, onSubmit, onCancel, darkMode, inputCla
   );
 }
 
-function DepartmentForm({ initial, onSubmit, onCancel, darkMode, inputClass }) {
-  const [form, setForm] = useState({ name: initial?.name || "", head: initial?.head || "", budget: initial?.budget ?? 0 });
+function DepartmentForm({ initial, people = [], onSubmit, onCancel, darkMode, inputClass }) {
+  const [form, setForm] = useState({ name: initial?.name || "", headId: initial?.headId || "", budget: initial?.budget ?? 0 });
   const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  // The head must be a real person in the system. Non-admins can't fetch the
+  // user list, so keep the current head selectable from what we know.
+  const options = people.some((p) => p.id === initial?.headId) || !initial?.headId ? people : [{ id: initial.headId, name: initial.head }, ...people];
+
+  async function submit() {
+    if (!form.name.trim()) return setError("Department name is required.");
+    if (Number(form.budget) < 0) return setError("Budget can't be negative.");
+    setSaving(true);
+    const message = await onSubmit({ name: form.name.trim(), headId: form.headId ? Number(form.headId) : null, budget: Number(form.budget) || 0 });
+    setSaving(false);
+    if (message) setError(message);
+  }
+
   return (
     <div className="space-y-3">
       <Field label="Department Name">
         <input className={inputClass} value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
       </Field>
       <Field label="Department Head">
-        <input className={inputClass} value={form.head} onChange={(e) => setForm((f) => ({ ...f, head: e.target.value }))} />
+        <select className={inputClass} value={form.headId} onChange={(e) => setForm((f) => ({ ...f, headId: e.target.value }))}>
+          <option value="">No head assigned</option>
+          {options.map((p) => (
+            <option key={p.id} value={p.id}>{p.name}</option>
+          ))}
+        </select>
       </Field>
       <Field label="Monthly Budget (₨)">
-        <input type="number" className={inputClass} value={form.budget} onChange={(e) => setForm((f) => ({ ...f, budget: Number(e.target.value) }))} />
+        <input type="number" min="0" className={inputClass} value={form.budget} onChange={(e) => setForm((f) => ({ ...f, budget: e.target.value }))} />
       </Field>
+      {initial && initial.name !== form.name.trim() && form.name.trim() && (
+        <p className="text-[10.5px] text-amber-500">Renaming also updates the department on all {initial.totalUsers} user{initial.totalUsers === 1 ? "" : "s"} in it.</p>
+      )}
       {error && <p className="text-[11px] text-rose-500">{error}</p>}
       <div className="flex items-center gap-2 pt-1">
         <button onClick={onCancel} className={`flex-1 text-xs font-semibold rounded-lg py-2 border ${darkMode ? "border-slate-700 text-slate-300 hover:bg-slate-800" : "border-slate-200 text-slate-600 hover:bg-slate-50"}`}>
           Cancel
         </button>
         <button
-          onClick={() => {
-            if (!form.name.trim() || !form.head.trim()) {
-              setError("Name and head are required.");
-              return;
-            }
-            onSubmit(form);
-          }}
-          className="flex-1 text-xs font-semibold rounded-lg py-2 text-white bg-gradient-to-r from-violet-600 to-indigo-600 hover:opacity-90"
+          disabled={saving}
+          onClick={submit}
+          className="flex-1 text-xs font-semibold rounded-lg py-2 text-white bg-gradient-to-r from-violet-600 to-indigo-600 hover:opacity-90 disabled:opacity-60"
         >
-          {initial ? "Save Changes" : "Add Department"}
+          {saving ? "Saving..." : initial ? "Save Changes" : "Add Department"}
         </button>
       </div>
     </div>
   );
+}
+
+function detectCardBrand(digits) {
+  if (/^4/.test(digits)) return "Visa";
+  if (/^(5[1-5]|2(2[2-9][1-9]|2[3-9]|[3-6]|7[01]|720))/.test(digits)) return "Mastercard";
+  if (/^3[47]/.test(digits)) return "American Express";
+  if (/^(6011|65|64[4-9])/.test(digits)) return "Discover";
+  if (/^35(2[89]|[3-8])/.test(digits)) return "JCB";
+  if (/^3(0[0-5]|[68])/.test(digits)) return "Diners Club";
+  if (/^62/.test(digits)) return "UnionPay";
+  return "Card";
+}
+
+function passesLuhn(digits) {
+  let sum = 0;
+  let alt = false;
+  for (let i = digits.length - 1; i >= 0; i--) {
+    let n = Number(digits[i]);
+    if (alt) {
+      n *= 2;
+      if (n > 9) n -= 9;
+    }
+    sum += n;
+    alt = !alt;
+  }
+  return sum % 10 === 0;
 }
 
 function PaymentForm({ onSubmit, onCancel, darkMode, inputClass }) {
@@ -2175,36 +2418,71 @@ function PaymentForm({ onSubmit, onCancel, darkMode, inputClass }) {
   const [expiry, setExpiry] = useState("");
   const [cvv, setCvv] = useState("");
   const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const digits = number.replace(/\D/g, "");
+  const brand = detectCardBrand(digits);
+
+  async function submit() {
+    const m = expiry.match(/^(0[1-9]|1[0-2])\/(\d{2})$/);
+    const cvvLen = brand === "American Express" ? 4 : 3;
+    if (digits.length < 12 || digits.length > 19 || !passesLuhn(digits)) return setError("That card number doesn't look valid.");
+    if (!m) return setError("Enter the expiry as MM/YY.");
+    const now = new Date();
+    const year = 2000 + Number(m[2]);
+    if (year < now.getFullYear() || (year === now.getFullYear() && Number(m[1]) < now.getMonth() + 1)) {
+      return setError("That card has expired.");
+    }
+    if (cvv.length !== cvvLen) return setError(`Enter the ${cvvLen}-digit security code.`);
+    setError("");
+    setSaving(true);
+    await onSubmit(digits.slice(-4), brand, expiry);
+    setSaving(false);
+  }
+
   return (
     <div className="space-y-3">
-      <Field label="Card Number">
-        <input className={inputClass} placeholder="4242 4242 4242 4242" value={number} onChange={(e) => setNumber(e.target.value)} maxLength={19} />
+      <Field label={`Card Number${digits ? ` · ${brand}` : ""}`}>
+        <input
+          className={inputClass}
+          inputMode="numeric"
+          autoComplete="off"
+          placeholder="4242 4242 4242 4242"
+          value={number}
+          onChange={(e) => setNumber(e.target.value.replace(/[^\d ]/g, "").replace(/(\d{4})(?=\d)/g, "$1 ").slice(0, 23))}
+        />
       </Field>
       <div className="grid grid-cols-2 gap-3">
         <Field label="Expiry">
-          <input className={inputClass} placeholder="MM/YY" value={expiry} onChange={(e) => setExpiry(e.target.value)} maxLength={5} />
+          <input
+            className={inputClass}
+            inputMode="numeric"
+            autoComplete="off"
+            placeholder="MM/YY"
+            value={expiry}
+            onChange={(e) => {
+              const v = e.target.value.replace(/[^\d]/g, "").slice(0, 4);
+              setExpiry(v.length > 2 ? `${v.slice(0, 2)}/${v.slice(2)}` : v);
+            }}
+            maxLength={5}
+          />
         </Field>
         <Field label="CVV">
-          <input className={inputClass} placeholder="123" value={cvv} onChange={(e) => setCvv(e.target.value)} maxLength={4} />
+          <input className={inputClass} type="password" inputMode="numeric" autoComplete="off" placeholder="123" value={cvv} onChange={(e) => setCvv(e.target.value.replace(/\D/g, ""))} maxLength={4} />
         </Field>
       </div>
+      <p className={`text-[10.5px] ${darkMode ? "text-slate-500" : "text-slate-400"}`}>Only the card brand, last 4 digits and expiry are saved. The full number and CVV never leave this window.</p>
       {error && <p className="text-[11px] text-rose-500">{error}</p>}
       <div className="flex items-center gap-2 pt-1">
         <button onClick={onCancel} className={`flex-1 text-xs font-semibold rounded-lg py-2 border ${darkMode ? "border-slate-700 text-slate-300 hover:bg-slate-800" : "border-slate-200 text-slate-600 hover:bg-slate-50"}`}>
           Cancel
         </button>
         <button
-          onClick={() => {
-            const digits = number.replace(/\s/g, "");
-            if (digits.length < 12 || !expiry || cvv.length < 3) {
-              setError("Enter a valid card number, expiry and CVV.");
-              return;
-            }
-            onSubmit(digits.slice(-4), "Visa");
-          }}
-          className="flex-1 text-xs font-semibold rounded-lg py-2 text-white bg-gradient-to-r from-violet-600 to-indigo-600 hover:opacity-90"
+          disabled={saving}
+          onClick={submit}
+          className="flex-1 text-xs font-semibold rounded-lg py-2 text-white bg-gradient-to-r from-violet-600 to-indigo-600 hover:opacity-90 disabled:opacity-60"
         >
-          Save Card
+          {saving ? "Saving..." : "Save Card"}
         </button>
       </div>
     </div>

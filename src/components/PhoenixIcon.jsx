@@ -1,4 +1,14 @@
-export default function PhoenixIcon({ className = "", gradientId = "phoenixGradient" }) {
+import { markLogoBroken, useBrand } from "../brand.js";
+
+// The Hopenix phoenix drawn as SVG. If the admin has uploaded their own
+// company logo (Settings -> General -> Company Logo) that picture is shown
+// instead, in the same box, everywhere this icon is used (landing page,
+// navbar, footer, contact / privacy / terms pages...).
+export default function PhoenixIcon({ className = "", gradientId = "phoenixGradient", ...rest }) {
+  const { logo } = useBrand();
+  if (logo) {
+    return <img {...rest} src={logo} alt="Company logo" className={`${className} object-contain`} onError={markLogoBroken} />;
+  }
   return (
     <svg
       viewBox="0 0 1254 1254"

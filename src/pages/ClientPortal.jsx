@@ -52,7 +52,7 @@ import {
   Download,
   Trash2,
 } from "lucide-react";
-import phoenixLogo from "../assets/phoenix-logo.png";
+import BrandImg from "../components/BrandImg.jsx";
 import birthdayTune from "../assets/happy-birthday-voice.mp3";
 import { useResolvedAttachments } from "../attachmentStorage.js";
 import { UserMeetings } from "./Meetings";
@@ -981,7 +981,7 @@ function PaymentModal({ client, invoice, onClose, onSubmitted }) {
         <div className="flex items-start justify-between gap-3 mb-4">
           <div className="flex items-center gap-2.5 min-w-0">
             <div className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center shrink-0 overflow-hidden">
-              <img src={phoenixLogo} alt={`${BRAND_NAME} logo`} className="w-full h-full object-contain p-1" />
+              <BrandImg alt={`${BRAND_NAME} logo`} className="w-full h-full object-contain p-1" />
             </div>
             <div className="min-w-0">
               <p className="text-sm font-extrabold text-white truncate">{BRAND_NAME}</p>
@@ -1809,8 +1809,8 @@ function HangingSpotlightBird() {
             the image below (which sets its own `transform`) can't knock
             the bird off-center under the beam. */}
         <div className="absolute bottom-6 left-1/2 -translate-x-1/2 w-36">
-          <img
-            src={phoenixLogo}
+          <BrandImg
+            
             alt={`${BRAND_NAME} logo`}
             className="w-full h-auto"
             style={{ animation: "birdAwaken 1.8s ease-out forwards, phxFloat 4s ease-in-out infinite 1.8s, phxGlow 3.5s ease-in-out infinite 1.8s" }}
@@ -1902,7 +1902,7 @@ function LoginScreen({ onLogin }) {
           <div>
             <div className="flex items-center gap-3 mb-6">
               <div className="w-11 h-11 rounded-xl bg-white/5 flex items-center justify-center shrink-0 overflow-hidden">
-                <img src={phoenixLogo} alt={`${BRAND_NAME} logo`} className="w-full h-full object-contain p-1.5" />
+                <BrandImg alt={`${BRAND_NAME} logo`} className="w-full h-full object-contain p-1.5" />
               </div>
               <div>
                 <p className="text-lg font-extrabold text-white leading-tight">{BRAND_NAME}</p>
@@ -1968,15 +1968,15 @@ function LoginScreen({ onLogin }) {
             {/* mobile-only brand mark */}
             <div className="lg:hidden flex items-center gap-2 mb-8 justify-center">
               <div className="w-9 h-9 rounded-xl bg-white/5 flex items-center justify-center overflow-hidden">
-                <img src={phoenixLogo} alt={`${BRAND_NAME} logo`} className="w-full h-full object-contain p-1" />
+                <BrandImg alt={`${BRAND_NAME} logo`} className="w-full h-full object-contain p-1" />
               </div>
               <span className="text-base font-extrabold text-white">{BRAND_NAME}</span>
             </div>
 
             <PhoenixKeyframes />
             <div className="w-16 h-16 rounded-2xl bg-white/5 flex items-center justify-center mx-auto mb-4 overflow-hidden">
-              <img
-                src={phoenixLogo}
+              <BrandImg
+                
                 alt={`${BRAND_NAME} logo`}
                 className="w-full h-full object-contain p-2"
                 style={{ animation: "phxFloat 4s ease-in-out infinite, phxGlow 3.5s ease-in-out infinite" }}
@@ -2158,7 +2158,7 @@ function Sidebar({ client, view, onNavigate, mobileOpen, onCloseMobile, onLogout
       >
         <div className="flex items-center gap-2.5 px-1 mb-8">
           <div className="w-9 h-9 rounded-xl bg-white/5 flex items-center justify-center shrink-0 overflow-hidden">
-            <img src={phoenixLogo} alt={`${BRAND_NAME} logo`} className="w-full h-full object-contain p-1" />
+            <BrandImg alt={`${BRAND_NAME} logo`} className="w-full h-full object-contain p-1" />
           </div>
           <div className="min-w-0">
             <p className="text-base font-extrabold text-white leading-tight truncate">{BRAND_NAME}</p>

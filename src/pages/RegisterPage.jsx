@@ -20,7 +20,7 @@ import {
   XCircle,
   Check,
 } from "lucide-react";
-import phoenixLogo from "../assets/phoenix-logo.png";
+import BrandImg from "../components/BrandImg.jsx";
 
 /* ===========================================================================
    RegisterPage - fully self-contained. Matches the reference design 1:1:
@@ -250,8 +250,8 @@ function PhoenixHero() {
         <div className="phoenix-ambient-glow" />
 
         {/* the bird itself, floating */}
-        <img
-          src={phoenixLogo}
+        <BrandImg
+          
           alt="Hopenix phoenix"
           className="phoenix-hero-img relative z-10 w-40 h-40 xs:w-48 xs:h-48 sm:w-56 sm:h-56 md:w-60 md:h-60 object-contain"
         />
@@ -278,8 +278,8 @@ function BrandPanel({ navigate }) {
         className="flex items-center gap-3 mb-5 sm:mb-6"
         aria-label="Hopenix home"
       >
-        <img
-          src={phoenixLogo}
+        <BrandImg
+          
           alt="Hopenix"
           className="w-8 h-8 sm:w-9 sm:h-9 object-contain drop-shadow-[0_0_12px_rgba(139,92,246,0.5)]"
         />
