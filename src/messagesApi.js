@@ -71,3 +71,13 @@ export function reactToMessage(messageId, emoji) {
     body: JSON.stringify({ emoji }),
   });
 }
+
+/** Permanently deletes one message (and its attachment file) for everyone. */
+export function deleteMessage(messageId) {
+  return apiFetch(`/messages/${messageId}/`, { method: "DELETE" });
+}
+
+/** Permanently deletes a whole chat (all its messages + call history). */
+export function deleteConversation(conversationId) {
+  return apiFetch(`/conversations/${conversationId}/`, { method: "DELETE" });
+}

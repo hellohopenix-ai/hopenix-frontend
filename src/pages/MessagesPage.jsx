@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { useAuth } from "../AuthContext.jsx";
 import { useMessagingSocket } from "../MessagingSocketContext.jsx";
-import { fetchConversations, fetchThread, markThreadRead, sendMessage as apiSendMessage, reactToMessage as apiReactToMessage } from "../messagesApi.js";
+import { fetchConversations, fetchThread, markThreadRead, sendMessage as apiSendMessage, reactToMessage as apiReactToMessage, deleteMessage as apiDeleteMessage, deleteConversation as apiDeleteConversation } from "../messagesApi.js";
 import {
   getPendingEmployeeBirthdayMessages,
   markBirthdayMessageDelivered,
@@ -1011,6 +1011,10 @@ export default function MessagesPage({ darkMode, conversations, setConversations
   const [callHistory, setCallHistory] = useState([]);
 
   const [apiConversations, setApiConversations] = useState([]);
+  // Becomes true once the server has ever returned conversations, so that
+  // deleting the LAST chat shows an empty list instead of falling back to
+  // the local/mock conversations.
+  const [apiHadConversations, setApiHadConversations] = useState(false);
   const [apiThread, setApiThread] = useState([]);
   // Captured once per conversation-open (see loadActiveThread below), so a
   // "2 unread messages" divider can be shown once — like WhatsApp — instead
@@ -1026,6 +1030,7 @@ export default function MessagesPage({ darkMode, conversations, setConversations
       const list = await fetchConversations();
       if (Array.isArray(list)) {
         setApiConversations(list);
+        if (list.length > 0) setApiHadConversations(true);
       }
     } catch (err) {
       console.error("Could not fetch conversations:", err);
@@ -1039,7 +1044,7 @@ export default function MessagesPage({ darkMode, conversations, setConversations
   }, [loadApiConversations]);
 
   const effectiveConversations = useMemo(() => {
-    if (apiConversations.length > 0) {
+    if (apiConversations.length > 0 || apiHadConversations) {
       return apiConversations.map((c) => ({
         id: c.id,
         otherUserId: c.otherUser?.id,
@@ -1068,7 +1073,7 @@ export default function MessagesPage({ darkMode, conversations, setConversations
       }));
     }
     return conversations || [];
-  }, [apiConversations, conversations]);
+  }, [apiConversations, apiHadConversations, conversations]);
 
   const active = effectiveConversations.find((c) => c.id === activeId) || effectiveConversations[0] || null;
   const activePartnerId = active?.otherUserId;
@@ -1197,6 +1202,16 @@ export default function MessagesPage({ darkMode, conversations, setConversations
         return;
       }
       if (data.type === "message.reaction") {
+        const partnerId = activePartnerIdRef.current;
+        if (partnerId) {
+          fetchThread(partnerId).then((msgs) => setApiThread(msgs || [])).catch(() => {});
+        }
+        return;
+      }
+      // The other person (or another tab of mine) permanently deleted a
+      // message / a whole chat — drop it from the open view right away.
+      if (data.type === "message.deleted" || data.type === "conversation.deleted") {
+        loadApiConversations();
         const partnerId = activePartnerIdRef.current;
         if (partnerId) {
           fetchThread(partnerId).then((msgs) => setApiThread(msgs || [])).catch(() => {});
@@ -1811,8 +1826,53 @@ export default function MessagesPage({ darkMode, conversations, setConversations
     setConfirmTarget({ type: "conversation", id: convo.id, label: `your conversation with ${convo.name}` });
   }
 
-  function confirmDelete() {
+  async function confirmDelete() {
     if (!confirmTarget) return;
+    const target = confirmTarget;
+
+    // Real (server-backed) chats: delete on the server FIRST so it is
+    // permanent, then update the screen. Local/mock chats keep the old
+    // local-only behaviour below.
+    const isApiMessage = target.type === "message" && !!activePartnerId && apiThread.some((m) => m.id === target.id);
+    const isApiConversation = target.type === "conversation" && apiConversations.some((c) => c.id === target.id);
+
+    if (isApiMessage) {
+      setConfirmTarget(null);
+      try {
+        await apiDeleteMessage(target.id);
+        setApiThread((prev) => prev.filter((m) => m.id !== target.id));
+        loadApiConversations();
+        window.dispatchEvent(new Event("hopenix:messages-changed"));
+        setToast("Message deleted");
+      } catch (err) {
+        console.error("Failed to delete message:", err);
+        setToast(err?.message || "Could not delete the message");
+        fetchThread(activePartnerId).then((msgs) => setApiThread(msgs || [])).catch(() => {});
+      }
+      return;
+    }
+
+    if (isApiConversation) {
+      setConfirmTarget(null);
+      try {
+        await apiDeleteConversation(target.id);
+        const remaining = apiConversations.filter((c) => c.id !== target.id);
+        setApiConversations(remaining);
+        if (target.id === activeId) {
+          setApiThread([]);
+          setActiveId(remaining[0]?.id || null);
+          setMobileView("list");
+        }
+        loadApiConversations();
+        window.dispatchEvent(new Event("hopenix:messages-changed"));
+        setToast("Conversation deleted");
+      } catch (err) {
+        console.error("Failed to delete conversation:", err);
+        setToast(err?.message || "Could not delete the conversation");
+      }
+      return;
+    }
+
     if (confirmTarget.type === "message") {
       setConversations((prev) =>
         prev.map((c) =>

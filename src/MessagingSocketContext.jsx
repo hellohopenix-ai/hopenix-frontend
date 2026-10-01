@@ -578,7 +578,7 @@ export function MessagingSocketProvider({ darkMode, children }) {
         }
         // "You were assigned a task" — Dashboard listens for this window
         // event and lights the Tasks sidebar dot instantly.
-        if (data.type === "message.new" || data.type === "thread.read") {
+        if (data.type === "message.new" || data.type === "thread.read" || data.type === "message.deleted" || data.type === "conversation.deleted") {
           window.dispatchEvent(new Event("hopenix:messages-changed"));
         }
         // Sound for things that arrive while the app is open and visible
