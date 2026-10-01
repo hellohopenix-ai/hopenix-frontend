@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { ensurePushSubscribed } from "../pushSubscription.js";
+import { canInstallApp, installHopenixApp, isAndroid, PHONE_TIPS } from "../installApp.js";
 
 // Notification permission popup.
 //
@@ -22,6 +23,22 @@ const isStandalone =
   (window.matchMedia?.("(display-mode: standalone)").matches || window.navigator.standalone === true);
 
 const RESYNC_EVERY_MS = 5 * 60 * 1000;
+const NUDGE_KEY = "hopenix_phone_nudge_v1"; // the one-time "install the app" card was dealt with
+
+function lsGet(key) {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+function lsSet(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    /* ignore */
+  }
+}
 
 export default function EnableNotificationsBanner({ darkMode, token, audience }) {
   const what = audience === "client" ? "messages, project updates and birthday wishes" : "messages, calls and tasks";
@@ -31,6 +48,15 @@ export default function EnableNotificationsBanner({ darkMode, token, audience })
   const [note, setNote] = useState("");
   const [hidden, setHidden] = useState(false); // "Not now": only until the next page load
   const [thanks, setThanks] = useState(false);
+  const [nudgeDone, setNudgeDone] = useState(() => lsGet(NUDGE_KEY) === "1");
+  const [showTips, setShowTips] = useState(false);
+  const [canInstall, setCanInstall] = useState(canInstallApp());
+
+  useEffect(() => {
+    const sync = () => setCanInstall(canInstallApp());
+    window.addEventListener("hopenix-install-ready", sync);
+    return () => window.removeEventListener("hopenix-install-ready", sync);
+  }, []);
 
   const needsInstall = isIOS && !isStandalone; // iPhone: push only works from the Home Screen app
 
@@ -110,8 +136,57 @@ export default function EnableNotificationsBanner({ darkMode, token, audience })
     );
   }
 
-  // Granted / unsupported (non-iPhone) / dismissed for this visit: show nothing.
-  if (perm === "granted" || hidden || (!supported && !needsInstall)) return null;
+  // Granted: nothing to ask. On an Android phone that is NOT using the installed
+  // app, show a small one-time card — Android puts a plain Chrome tab to sleep,
+  // which is the usual reason notifications stop when the phone is locked.
+  if (perm === "granted") {
+    if (!isAndroid || isStandalone || nudgeDone) return null;
+    const done = () => {
+      lsSet(NUDGE_KEY, "1");
+      setNudgeDone(true);
+    };
+    const nCard = darkMode ? "bg-[#14122b] text-violet-50 border border-violet-500/30" : "bg-white text-slate-900 border border-slate-200";
+    return (
+      <div className={`fixed bottom-3 left-3 right-3 sm:left-auto sm:right-4 sm:max-w-sm z-[10000] rounded-2xl p-4 shadow-2xl ${nCard}`}>
+        <p className="text-[13px] font-bold">Get notifications even when your phone is locked</p>
+        <p className={`text-[12px] mt-1 ${darkMode ? "text-violet-200/80" : "text-slate-600"}`}>
+          Install Hopenix as an app and let it run in the background, otherwise your phone may put the browser to sleep.
+        </p>
+        {showTips && (
+          <ol className={`list-decimal pl-5 mt-2 space-y-1 text-[11px] ${darkMode ? "text-violet-100/90" : "text-slate-700"}`}>
+            {PHONE_TIPS.map((t) => <li key={t}>{t}</li>)}
+          </ol>
+        )}
+        <div className="flex flex-wrap items-center gap-2 mt-3">
+          {canInstall && (
+            <button
+              type="button"
+              onClick={async () => {
+                await installHopenixApp();
+                setShowTips(true);
+              }}
+              className="px-3 py-1.5 rounded-lg bg-violet-600 text-white text-[12px] font-semibold hover:bg-violet-700"
+            >
+              Install app
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setShowTips((v) => !v)}
+            className={`px-3 py-1.5 rounded-lg text-[12px] font-semibold border ${darkMode ? "border-violet-400/40" : "border-slate-300"}`}
+          >
+            {showTips ? "Hide steps" : "Show steps"}
+          </button>
+          <button type="button" onClick={done} className="ml-auto text-[12px] opacity-70 hover:opacity-100">
+            Done
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Unsupported (non-iPhone) / dismissed for this visit: show nothing.
+  if (hidden || (!supported && !needsInstall)) return null;
 
   const blocked = perm === "denied";
   const card = darkMode ? "bg-[#14122b] text-violet-50 border border-violet-500/30" : "bg-white text-slate-900";

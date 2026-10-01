@@ -2,6 +2,7 @@ import React, { useRef, useState, useEffect, useContext, createContext } from "r
 import { useAuth } from "../AuthContext.jsx";
 import { useBrand, DEFAULT_LOGO, uploadCompanyLogo, removeCompanyLogo } from "../brand.js";
 import { ensurePushSubscribed, sendTestPush } from "../pushSubscription.js";
+import PhoneNotificationHelp from "../components/PhoneNotificationHelp.jsx";
 import {
   Settings as SettingsIcon,
   User,
@@ -1632,6 +1633,7 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
                 </button>
               </div>
             </div>
+            <PhoneNotificationHelp darkMode={darkMode} />
             <div className="mt-4 overflow-x-auto">
               <table className="w-full text-left border-collapse min-w-[420px]">
                 <thead>
