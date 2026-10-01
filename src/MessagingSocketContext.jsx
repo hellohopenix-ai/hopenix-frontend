@@ -511,6 +511,7 @@ export function MessagingSocketProvider({ darkMode, children }) {
     const API_HTTP_BASE = API_ROOT;
     const WS_URL = API_HTTP_BASE.replace(/^http/, "ws") + "/ws/messages/";
     let cancelled = false;
+    let connecting = false; // a connect() is already in progress — never open two sockets
 
     async function fetchTicket() {
       const token = getMessagingToken();
@@ -528,30 +529,41 @@ export function MessagingSocketProvider({ darkMode, children }) {
       if (cancelled) return;
       const attempt = wsReconnectAttemptRef.current + 1;
       wsReconnectAttemptRef.current = attempt;
-      const delay = Math.min(15000, 1000 * 2 ** attempt);
+      // Quick retries (1s, 2s, then every 4s): a dropped socket means no instant
+      // red dot / banner, so it must come back fast.
+      const delay = Math.min(4000, 500 * 2 ** attempt);
       wsReconnectTimerRef.current = setTimeout(connect, delay);
     }
 
     async function connect() {
-      if (cancelled) return;
+      if (cancelled || connecting) return;
+      connecting = true;
       let ticket;
       try {
         ticket = await fetchTicket();
       } catch {
+        connecting = false;
         scheduleReconnect();
         return;
       }
-      if (cancelled) return;
+      if (cancelled) {
+        connecting = false;
+        return;
+      }
       if (!ticket) {
+        connecting = false;
         scheduleReconnect();
         return;
       }
 
       const socket = new WebSocket(`${WS_URL}?ticket=${encodeURIComponent(ticket)}`);
       wsRef.current = socket;
+      connecting = false;
 
       socket.onopen = () => {
         wsReconnectAttemptRef.current = 0;
+        // Anything sent while the socket was down is picked up right away.
+        window.dispatchEvent(new Event("hopenix:messages-changed"));
       };
 
       socket.onmessage = (event) => {
@@ -594,7 +606,7 @@ export function MessagingSocketProvider({ darkMode, children }) {
       };
 
       socket.onclose = (event) => {
-        wsRef.current = null;
+        if (wsRef.current === socket) wsRef.current = null;
         if (cancelled || event.code === 4001) return; // 4001 = auth failed, don't retry
         scheduleReconnect();
       };
@@ -604,7 +616,48 @@ export function MessagingSocketProvider({ darkMode, children }) {
 
     connect();
 
+    // A phone that was locked / in another app often leaves a "zombie" socket
+    // that still looks open but receives nothing — that is why the red dot and
+    // banners came late. Whenever the app comes back (or the network returns)
+    // drop the old socket and open a fresh one immediately.
+    let hiddenAt = 0;
+    function reconnectNow() {
+      if (cancelled) return;
+      if (wsReconnectTimerRef.current) clearTimeout(wsReconnectTimerRef.current);
+      wsReconnectAttemptRef.current = 0;
+      const old = wsRef.current;
+      if (old) {
+        wsRef.current = null;
+        old.onclose = null;
+        old.onerror = null;
+        try {
+          old.close();
+        } catch {
+          /* already closed */
+        }
+      }
+      connect();
+    }
+    function onVisibility() {
+      if (document.visibilityState === "hidden") {
+        hiddenAt = Date.now();
+        return;
+      }
+      const away = hiddenAt ? Date.now() - hiddenAt : 0;
+      hiddenAt = 0;
+      const open = wsRef.current && wsRef.current.readyState === WebSocket.OPEN;
+      if (!open || away > 10000) reconnectNow();
+      else window.dispatchEvent(new Event("hopenix:messages-changed"));
+    }
+    function onOnline() {
+      reconnectNow();
+    }
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("online", onOnline);
+
     return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("online", onOnline);
       cancelled = true;
       if (wsReconnectTimerRef.current) clearTimeout(wsReconnectTimerRef.current);
       if (wsRef.current) wsRef.current.close();
