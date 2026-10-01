@@ -92,7 +92,7 @@ async function tasksApiFetch(path, options = {}) {
    built for exactly this (bytes on disk, path+metadata in Postgres) —
    this is the multipart counterpart to tasksApiFetch that actually uses
    them, instead of a second, unused code path sitting idle. */
-async function tasksApiUploadZip(taskId, file, { final = false } = {}) {
+async function tasksApiUploadZip(taskId, file, { final = false, moduleId = null } = {}) {
   const token = localStorage.getItem("hopenix_auth_token");
   const headers = {};
   if (token) headers["Authorization"] = `Token ${token}`;
@@ -103,6 +103,7 @@ async function tasksApiUploadZip(taskId, file, { final = false } = {}) {
   // is also stored as the project's own zip — what the Clients page and
   // Client Portal actually read.
   if (final) formData.append("final", "1");
+  if (moduleId != null) formData.append("moduleId", String(moduleId));
 
   const res = await fetch(`${TASKS_API_BASE}/tasks/${taskId}/zip/`, {
     method: "POST",
@@ -3566,7 +3567,7 @@ export default function TasksPage({ darkMode = false, conversations = [], setCon
     }
     tasksApiFetch(`/tasks/${id}/complete/`, {
       method: "POST",
-      body: JSON.stringify({ link: link || "", attachments: newAttachments }),
+      body: JSON.stringify({ link: link || "", attachments: newAttachments, moduleId: resolveTaskModuleBackendId(targetTask) }),
     }).catch((err) => {
       console.error("Could not save task completion to the backend:", err);
     });
@@ -3595,7 +3596,7 @@ export default function TasksPage({ darkMode = false, conversations = [], setCon
     if (updatedTask) syncModuleStatusToClientsStorage(updatedTask, { newAttachments: [attachment] });
     tasksApiFetch(`/tasks/${id}/add-attachment/`, {
       method: "POST",
-      body: JSON.stringify({ attachment }),
+      body: JSON.stringify({ attachment, moduleId: resolveTaskModuleBackendId(targetTask) }),
     }).catch((err) => {
       console.error("Could not save the attachment to the backend:", err);
     });
@@ -5618,7 +5619,7 @@ function TaskAttachmentsSection({ task, onAddAttachment, onRemoveAttachment, dar
         // the task's `attachments` JSON column (5MB hard cap, no real
         // file on disk). Route it through the backend's TaskZipFile
         // storage instead — same endpoint the final deliverable now uses.
-        const uploaded = await tasksApiUploadZip(task.id, file);
+        const uploaded = await tasksApiUploadZip(task.id, file, { moduleId: resolveTaskModuleBackendId(task) });
         onAddAttachment({
           id: genAttachmentId(),
           type: "zip",
@@ -5627,13 +5628,13 @@ function TaskAttachmentsSection({ task, onAddAttachment, onRemoveAttachment, dar
           zipFileId: uploaded.id,
           uploadedAt: uploaded.uploadedOn || new Date().toISOString(),
         });
-      } else if (task.id && task.moduleBackendId) {
+      } else if (task.id && resolveTaskModuleBackendId(task) != null) {
         // FIX (cross-browser ModuleFile): when the task has a real backend
         // ID and a linked Module, upload the file to upload-file-attachment
         // which creates a ModuleFile row. The returned HTTP URL is stored
         // directly on the attachment entry so ClientPortal can download it
         // from any browser without needing this browser's IndexedDB.
-        const updatedTask = await clientsApi.uploadTaskFileAttachment(task.id, file);
+        const updatedTask = await clientsApi.uploadTaskFileAttachment(task.id, file, resolveTaskModuleBackendId(task));
         // The backend returns the full updated task — find the last attachment
         // it appended (the one we just uploaded, with a real HTTP url).
         const backendAttachments = updatedTask?.attachments || [];
@@ -6654,7 +6655,7 @@ function MarkCompleteModal({ task, onClose, onConfirm, darkMode }) {
     try {
       const type = detectAttachmentKind(file);
       if (type === "zip") {
-        const uploaded = await tasksApiUploadZip(task.id, file);
+        const uploaded = await tasksApiUploadZip(task.id, file, { moduleId: resolveTaskModuleBackendId(task) });
         setPendingFiles((list) => [
           ...list,
           {

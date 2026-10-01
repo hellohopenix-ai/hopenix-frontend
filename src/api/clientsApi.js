@@ -344,8 +344,10 @@ export function deleteDocument(documentId) {
  * @param {number} taskId  — the backend Task pk
  * @param {File}   file    — the raw File to upload
  */
-export function uploadTaskFileAttachment(taskId, file) {
+export function uploadTaskFileAttachment(taskId, file, moduleId = null) {
   const form = new FormData();
   form.append("file", file);
+  // Hint for tasks saved before Task.module was stamped — backend resolves the module from it.
+  if (moduleId != null) form.append("moduleId", String(moduleId));
   return apiFetch(`/tasks/tasks/${taskId}/upload-file-attachment/`, { method: "POST", body: form });
 }
