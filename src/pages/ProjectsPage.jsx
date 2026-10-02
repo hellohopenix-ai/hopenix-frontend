@@ -115,6 +115,17 @@ function nameToId(users, name) {
   return u ? u.id : null;
 }
 
+// A file must never be listed twice: drop any later entry with an id already seen.
+function dedupeById(list) {
+  const seen = new Set();
+  return (list || []).filter((x) => {
+    const key = String(x?.id);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 function backendModuleToFrontend(bm) {
   return {
     id: bm.id,
@@ -129,7 +140,7 @@ function backendModuleToFrontend(bm) {
     // "" | "pending" (waiting for admin approval) | "sent" — see projects/handoff.py
     handoffStatus: bm.handoff_status || "",
     handoffNext: bm.handoff_next_name || "",
-    files: (bm.files || []).map((f) => ({
+    files: dedupeById(bm.files || []).map((f) => ({
       id: f.id,
       fileName: f.original_name,
       mime: f.mime_type,
@@ -1988,6 +1999,13 @@ export default function ProjectsPage({ darkMode = false, conversations, setConve
   // same IndexedDB-backed storage as the project brief/ZIP uploads.
   const handleUploadModuleFile = async (projectId, moduleId, file) => {
     if (!file) return;
+    // FIX (one file shown twice): the live refresh could fetch the project
+    // while this upload was still running, already containing the new file,
+    // and then this handler appended the same file again. While an upload is
+    // in flight the refresh is now skipped (and any in-progress snapshot is
+    // discarded), and the append below ignores a file that is already there.
+    moduleSavesPendingRef.current += 1;
+    moduleMutationSeqRef.current += 1;
     try {
       const entry = await saveModuleFile(file);
       const localFileEntry = { ...entry, uploadedBy: CURRENT_USER, uploadedOn: new Date().toISOString().slice(0, 10) };
@@ -2023,7 +2041,7 @@ export default function ProjectsPage({ darkMode = false, conversations, setConve
           moduleName = (p.modules || []).find((m) => m.id === moduleId)?.name || moduleName;
           projectName = p.name;
           const modules = (p.modules || []).map((m) =>
-            m.id === moduleId ? { ...m, files: [...(m.files || []), fileEntry] } : m
+            m.id === moduleId ? { ...m, files: dedupeById([...(m.files || []), fileEntry]) } : m
           );
           return { ...p, modules };
         })
@@ -2034,6 +2052,9 @@ export default function ProjectsPage({ darkMode = false, conversations, setConve
       showToast(`${file.name} uploaded to the module.`, "success");
     } catch (e) {
       showToast(e.message || "Couldn't upload that file.", "error");
+    } finally {
+      moduleSavesPendingRef.current -= 1;
+      moduleMutationSeqRef.current += 1;
     }
   };
   const downloadModuleFile = (file) => downloadStoredFile(file, showToast);
