@@ -1551,7 +1551,14 @@ export default function ProjectsPage({ darkMode = false, conversations, setConve
   // list), so an employee can never see another employee's projects.
   const visibleProjects = useMemo(() => {
     if (isAdmin) return projects;
-    return projects.filter((p) => p.manager === CURRENT_USER || (p.team || []).includes(CURRENT_USER));
+    // FIX: a module assignee is part of the project's group even if the
+    // team list on this browser is stale.
+    return projects.filter(
+      (p) =>
+        p.manager === CURRENT_USER ||
+        (p.team || []).includes(CURRENT_USER) ||
+        (p.modules || []).some((m) => m.assignee === CURRENT_USER)
+    );
   }, [projects, isAdmin, CURRENT_USER]);
 
   // The logged-in person's own performance summary: how many projects
@@ -1649,7 +1656,7 @@ export default function ProjectsPage({ darkMode = false, conversations, setConve
       setProjects((prev) => (sameJson(prev, mapped) ? prev : mapped));
       saveStoredProjects(mapped);
     },
-    { interval: 15000 }
+    { interval: 5000 } // links/files attached on the Tasks page show up within seconds
   );
   const [toasts, setToasts] = useState([]);
   const [fullDetailsId, setFullDetailsId] = useState(null);

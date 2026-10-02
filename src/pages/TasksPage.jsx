@@ -5628,24 +5628,29 @@ function TaskAttachmentsSection({ task, onAddAttachment, onRemoveAttachment, dar
           zipFileId: uploaded.id,
           uploadedAt: uploaded.uploadedOn || new Date().toISOString(),
         });
-      } else if (task.id && resolveTaskModuleBackendId(task) != null) {
-        // FIX (cross-browser ModuleFile): when the task has a real backend
-        // ID and a linked Module, upload the file to upload-file-attachment
-        // which creates a ModuleFile row. The returned HTTP URL is stored
-        // directly on the attachment entry so ClientPortal can download it
-        // from any browser without needing this browser's IndexedDB.
-        const updatedTask = await clientsApi.uploadTaskFileAttachment(task.id, file, resolveTaskModuleBackendId(task));
-        // The backend returns the full updated task — find the last attachment
-        // it appended (the one we just uploaded, with a real HTTP url).
-        const backendAttachments = updatedTask?.attachments || [];
-        const newEntry = backendAttachments[backendAttachments.length - 1];
-        onAddAttachment(newEntry || { id: genAttachmentId(), type, name: file.name, uploadedAt: new Date().toISOString() });
       } else {
-        // Fallback: no linked module — store as base64 data URL in task JSON.
-        // This preserves all existing behaviour for tasks that aren't module-
-        // linked (regular tasks, tasks created before this fix).
-        const dataUrl = await readFileAsDataUrl(file);
-        onAddAttachment({ id: genAttachmentId(), type, name: file.name, url: dataUrl, uploadedAt: new Date().toISOString() });
+        // FIX (pdf/file would not attach): this used to upload to the backend
+        // ONLY when the browser already knew the module's pk, so a module
+        // assigned from the Projects page (no pk in this browser) fell to the
+        // base64 branch and never reached the module/Clients/Projects pages.
+        // Now the backend is always tried first (it resolves the module
+        // itself); base64 is only the last-resort fallback.
+        let handled = false;
+        if (task.id != null && Number.isFinite(Number(task.id))) {
+          try {
+            const updatedTask = await clientsApi.uploadTaskFileAttachment(task.id, file, resolveTaskModuleBackendId(task));
+            const backendAttachments = updatedTask?.attachments || [];
+            const newEntry = backendAttachments[backendAttachments.length - 1];
+            onAddAttachment(newEntry || { id: genAttachmentId(), type, name: file.name, uploadedAt: new Date().toISOString() });
+            handled = true;
+          } catch (err) {
+            if (!/no linked backend module/i.test(err?.message || "")) throw err;
+          }
+        }
+        if (!handled) {
+          const dataUrl = await readFileAsDataUrl(file);
+          onAddAttachment({ id: genAttachmentId(), type, name: file.name, url: dataUrl, uploadedAt: new Date().toISOString() });
+        }
       }
     } catch (e) {
       setError(e.message || "Could not upload file.");
