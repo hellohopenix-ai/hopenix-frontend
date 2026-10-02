@@ -39,6 +39,7 @@ import {
 } from "lucide-react";
 import { useAuth, getRoleCategory } from "../AuthContext.jsx";
 import * as projectsApi from "../projectsApi.js";
+import { API_ROOT } from "../apiConfig.js";
 import { useLiveRefresh, sameJson } from "../useLiveRefresh.js";
 import { listAllDaily, bulkDeleteDaily } from "./reportsApi.js";
 import * as messagesApi from "../messagesApi.js";
@@ -1514,6 +1515,34 @@ export default function ProjectsPage({ darkMode = false, conversations, setConve
     return map;
   }, [approvedUsers]);
 
+  // Registered CLIENTS (portal logins, role="client") — fetched separately
+  // because approvedUsers is staff-only. They are offered in every module
+  // "Assign to" dropdown next to the employees/managers, and are resolved
+  // to real user ids the same way when a module is saved.
+  const [clientUsers, setClientUsers] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    const token = localStorage.getItem("hopenix_auth_token");
+    if (!token) return undefined;
+    fetch(`${API_ROOT}/api/auth/approved-users/?include_clients=1`, {
+      headers: { Authorization: `Token ${token}` },
+    })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((list) => {
+        if (!cancelled && Array.isArray(list)) setClientUsers(list.filter((u) => u.role === "client"));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const clientAssigneeNames = useMemo(
+    () => Array.from(new Set(clientUsers.map((u) => u.name).filter(Boolean))),
+    [clientUsers]
+  );
+  // Staff first, then clients — so a name that exists on both still resolves to the staff user.
+  const assignableUsers = useMemo(() => [...(approvedUsers || []), ...clientUsers], [approvedUsers, clientUsers]);
+
   // Real clients pulled live from the Clients page's own storage — this
   // is the "link" between the two pages: whatever exists on Clients
   // right now is exactly what's offered when adding a "Client Project"
@@ -2332,7 +2361,7 @@ export default function ProjectsPage({ darkMode = false, conversations, setConve
       try {
         const modulePayload = {
           name: m.name,
-          assignee: nameToId(approvedUsers, m.assignee),
+          assignee: nameToId(assignableUsers, m.assignee),
           status: m.status || "Pending",
           priority: m.priority || "Medium",
           due_date: m.dueDate || null,
@@ -2469,7 +2498,7 @@ export default function ProjectsPage({ darkMode = false, conversations, setConve
       const isNewModule = typeof m.id === "string" && m.id.startsWith("m-");
       const modulePayload = {
         name: m.name,
-        assignee: nameToId(approvedUsers, m.assignee),
+        assignee: nameToId(assignableUsers, m.assignee),
         status: m.status || "Pending",
         priority: m.priority || "Medium",
         due_date: m.dueDate || null,
@@ -3470,6 +3499,7 @@ export default function ProjectsPage({ darkMode = false, conversations, setConve
           onSubmit={handleCreate}
           darkMode={darkMode}
           teamOptions={approvedNames}
+          assigneeClientNames={clientAssigneeNames}
           teamDirectory={teamDirectory}
           clientOptions={realClients}
           isAdmin={isAdmin}
@@ -3485,6 +3515,7 @@ export default function ProjectsPage({ darkMode = false, conversations, setConve
           onSubmit={(data) => handleEditSave(editingProject.id, data)}
           darkMode={darkMode}
           teamOptions={approvedNames}
+          assigneeClientNames={clientAssigneeNames}
           teamDirectory={teamDirectory}
           clientOptions={realClients}
           isAdmin={isAdmin}
@@ -3954,7 +3985,7 @@ function DeliverablePreviewModal({ data, darkMode, card, cardText, mutedText, su
    CREATE PROJECT MODAL
 ====================================================================== */
 
-function CreateProjectModal({ onClose, onSubmit, darkMode, teamOptions = [], teamDirectory = {}, clientOptions = [], isAdmin, currentUser }) {
+function CreateProjectModal({ onClose, onSubmit, darkMode, teamOptions = [], assigneeClientNames = [], teamDirectory = {}, clientOptions = [], isAdmin, currentUser }) {
   const [form, setForm] = useState({
     name: "", description: "", projectType: "company", client: "", manager: "", team: [], deadline: "", budget: "", features: "", requirements: "",
     briefFile: null, // { id, fileName, mime, size, storedInIDB } (or legacy { id, fileName, dataUrl, mime, size, storedInIDB: false })
@@ -4114,7 +4145,8 @@ function CreateProjectModal({ onClose, onSubmit, darkMode, teamOptions = [], tea
 
   // Assignee options for a module: manager + selected team members so
   // far, falling back to every approved user if nobody's picked yet.
-  const moduleAssigneeOptions = Array.from(new Set([...(form.manager ? [form.manager] : []), ...form.team, ...teamOptions]));
+  const moduleAssigneeOptions = Array.from(new Set([...(form.manager ? [form.manager] : []), ...form.team, ...teamOptions, ...assigneeClientNames]));
+  const assigneeLabel = (n) => (assigneeClientNames.includes(n) && !teamOptions.includes(n) ? `${n} (Client)` : n);
 
   return (
     <div className="fixed inset-0 z-[90] bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
@@ -4299,7 +4331,7 @@ function CreateProjectModal({ onClose, onSubmit, darkMode, teamOptions = [], tea
               <div className="grid grid-cols-2 gap-2">
                 <select value={newModule.assignee} onChange={(e) => setNewModule((f) => ({ ...f, assignee: e.target.value }))} className={`w-full text-sm border rounded-lg px-2.5 py-2 outline-none ${inputCls}`}>
                   <option value="">Unassigned</option>
-                  {moduleAssigneeOptions.map((n) => <option key={n} value={n}>{n}</option>)}
+                  {moduleAssigneeOptions.map((n) => <option key={n} value={n}>{assigneeLabel(n)}</option>)}
                 </select>
                 <select value={newModule.priority} onChange={(e) => setNewModule((f) => ({ ...f, priority: e.target.value }))} className={`w-full text-sm border rounded-lg px-2.5 py-2 outline-none ${inputCls}`}>
                   {MODULE_PRIORITY_OPTIONS.map((p) => <option key={p} value={p}>{p} priority</option>)}
@@ -4463,7 +4495,7 @@ function CreateProjectModal({ onClose, onSubmit, darkMode, teamOptions = [], tea
    reloads/navigation until someone explicitly deletes the project.
 ====================================================================== */
 
-function EditProjectModal({ project, onClose, onSubmit, darkMode, teamOptions = [], teamDirectory = {}, clientOptions = [], isAdmin, currentUser }) {
+function EditProjectModal({ project, onClose, onSubmit, darkMode, teamOptions = [], assigneeClientNames = [], teamDirectory = {}, clientOptions = [], isAdmin, currentUser }) {
   const [form, setForm] = useState({
     name: project.name,
     description: project.description,
@@ -4580,7 +4612,8 @@ function EditProjectModal({ project, onClose, onSubmit, darkMode, teamOptions = 
 
   // Assignee options for a module: manager + selected team members so
   // far, falling back to every approved user if nobody's picked yet.
-  const moduleAssigneeOptions = Array.from(new Set([...(form.manager ? [form.manager] : []), ...form.team, ...teamOptions]));
+  const moduleAssigneeOptions = Array.from(new Set([...(form.manager ? [form.manager] : []), ...form.team, ...teamOptions, ...assigneeClientNames]));
+  const assigneeLabel = (n) => (assigneeClientNames.includes(n) && !teamOptions.includes(n) ? `${n} (Client)` : n);
 
   // Everyone selectable in these dropdowns must come from real approved
   // users. The project's current manager/team is always kept selectable
@@ -4838,7 +4871,7 @@ function EditProjectModal({ project, onClose, onSubmit, darkMode, teamOptions = 
               <div className="grid grid-cols-2 gap-2">
                 <select value={newModule.assignee} onChange={(e) => setNewModule((f) => ({ ...f, assignee: e.target.value }))} className={`w-full text-sm border rounded-lg px-2.5 py-2 outline-none ${inputCls}`}>
                   <option value="">Unassigned</option>
-                  {moduleAssigneeOptions.map((n) => <option key={n} value={n}>{n}</option>)}
+                  {moduleAssigneeOptions.map((n) => <option key={n} value={n}>{assigneeLabel(n)}</option>)}
                 </select>
                 <select value={newModule.priority} onChange={(e) => setNewModule((f) => ({ ...f, priority: e.target.value }))} className={`w-full text-sm border rounded-lg px-2.5 py-2 outline-none ${inputCls}`}>
                   {MODULE_PRIORITY_OPTIONS.map((p) => <option key={p} value={p}>{p} priority</option>)}
@@ -4899,7 +4932,7 @@ function EditProjectModal({ project, onClose, onSubmit, darkMode, teamOptions = 
                         className={`text-[11px] rounded-lg px-1.5 py-1 outline-none ${inputCls}`}
                       >
                         <option value="">Unassigned</option>
-                        {moduleAssigneeOptions.map((n) => <option key={n} value={n}>{n}</option>)}
+                        {moduleAssigneeOptions.map((n) => <option key={n} value={n}>{assigneeLabel(n)}</option>)}
                       </select>
                       <select
                         value={m.priority || "Medium"}
