@@ -1070,12 +1070,17 @@ export default function MessagesPage({ darkMode, conversations, setConversations
         phone: c.otherUser?.phone || "",
         location: c.otherUser?.location || "",
         otherUser: c.otherUser,
+        // Deleted "for me" — kept out of the inbox list, but still found by search.
+        hidden: !!c.hidden,
       }));
     }
     return conversations || [];
   }, [apiConversations, apiHadConversations, conversations]);
 
-  const active = effectiveConversations.find((c) => c.id === activeId) || effectiveConversations[0] || null;
+  const active =
+    effectiveConversations.find((c) => c.id === activeId) ||
+    effectiveConversations.find((c) => !c.hidden) ||
+    null;
   const activePartnerId = active?.otherUserId;
 
   const messagesToRender = useMemo(() => {
@@ -1439,6 +1444,9 @@ export default function MessagesPage({ darkMode, conversations, setConversations
   const filtered = (effectiveConversations || [])
     .filter(
       (c) =>
+        // A chat I deleted stays out of the list, but typing in the search box
+        // finds that person again (WhatsApp-style).
+        (!c.hidden || (query || "").trim() !== "") &&
         (c.name || "").toLowerCase().includes((query || "").toLowerCase()) &&
         (statusFilter === "All" || c.status === statusFilter)
     )
@@ -1856,16 +1864,18 @@ export default function MessagesPage({ darkMode, conversations, setConversations
       setConfirmTarget(null);
       try {
         await apiDeleteConversation(target.id);
-        const remaining = apiConversations.filter((c) => c.id !== target.id);
+        // Deleted only for me: keep the row (flagged hidden) so search can
+        // still find this person; the other side's chat is untouched.
+        const remaining = apiConversations.map((c) => (c.id === target.id ? { ...c, hidden: true, unreadCount: 0, lastMessage: null } : c));
         setApiConversations(remaining);
         if (target.id === activeId) {
           setApiThread([]);
-          setActiveId(remaining[0]?.id || null);
+          setActiveId(remaining.find((c) => !c.hidden)?.id || null);
           setMobileView("list");
         }
         loadApiConversations();
         window.dispatchEvent(new Event("hopenix:messages-changed"));
-        setToast("Conversation deleted");
+        setToast("Conversation deleted for you");
       } catch (err) {
         console.error("Failed to delete conversation:", err);
         setToast(err?.message || "Could not delete the conversation");
@@ -1965,7 +1975,9 @@ export default function MessagesPage({ darkMode, conversations, setConversations
               Delete {confirmTarget.type === "conversation" ? "conversation?" : "message?"}
             </p>
             <p className={`mb-4 text-[11px] ${mutedText}`}>
-              This will permanently delete {confirmTarget.label}. This action can't be undone.
+              {confirmTarget.type === "conversation"
+                ? `This will delete ${confirmTarget.label} from your side only. The other person will still keep their copy.`
+                : `This will permanently delete ${confirmTarget.label}. This action can't be undone.`}
             </p>
             <div className="flex justify-end gap-2">
               <button
