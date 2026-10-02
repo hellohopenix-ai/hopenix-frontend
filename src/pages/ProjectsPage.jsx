@@ -1543,9 +1543,10 @@ export default function ProjectsPage({ darkMode = false, conversations, setConve
     if (!name) return null;
     const staff = (approvedUsers || []).find((u) => u.name === name);
     if (staff) return staff.id;
-    const c = clientUsers.find((u) => u.name === name);
+    const c = clientEntries.find((u) => u.name === name);
     if (!c) return null;
     if (c.id != null) return c.id;
+    if (!Number.isInteger(Number(c.clientId))) return null;
     const token = localStorage.getItem("hopenix_auth_token");
     const res = await fetch(`${API_ROOT}/api/auth/clients/${c.clientId}/ensure-user/`, {
       method: "POST",
@@ -1553,16 +1554,13 @@ export default function ProjectsPage({ darkMode = false, conversations, setConve
     });
     if (!res.ok) return null;
     const made = await res.json();
-    setClientUsers((prev) => prev.map((u) => (u.clientId === c.clientId ? { ...u, id: made.id } : u)));
+    setClientUsers((prev) =>
+      prev.some((u) => String(u.clientId) === String(c.clientId))
+        ? prev.map((u) => (String(u.clientId) === String(c.clientId) ? { ...u, id: made.id } : u))
+        : [...prev, { ...c, id: made.id }]
+    );
     return made.id;
   }
-  const clientAssigneeNames = useMemo(
-    () => Array.from(new Set(clientUsers.map((u) => u.name).filter(Boolean))),
-    [clientUsers]
-  );
-  // Staff first, then clients — so a name that exists on both still resolves to the staff user.
-  const assignableUsers = useMemo(() => [...(approvedUsers || []), ...clientUsers], [approvedUsers, clientUsers]);
-
   // Real clients pulled live from the Clients page's own storage — this
   // is the "link" between the two pages: whatever exists on Clients
   // right now is exactly what's offered when adding a "Client Project"
@@ -1579,6 +1577,24 @@ export default function ProjectsPage({ darkMode = false, conversations, setConve
       window.removeEventListener("storage", refresh);
     };
   }, []);
+
+  // Every client shown in the module "Assign to" dropdowns: the ones the
+  // server told us about (with/without a login) PLUS every client on the
+  // Clients page, so none is ever missing even if the server list failed.
+  const clientEntries = useMemo(() => {
+    const map = new Map();
+    clientUsers.forEach((u) => map.set(String(u.clientId ?? `u${u.id}`), u));
+    (realClients || []).forEach((c) => {
+      if (!map.has(String(c.id))) {
+        map.set(String(c.id), { id: null, name: c.contactPerson || c.name, role: "client", clientId: c.id });
+      }
+    });
+    return Array.from(map.values());
+  }, [clientUsers, realClients]);
+  const clientAssigneeNames = useMemo(
+    () => Array.from(new Set(clientEntries.map((u) => u.name).filter(Boolean))),
+    [clientEntries]
+  );
 
   const [projects, setProjects] = useState([]);
   const [projectsLoading, setProjectsLoading] = useState(true);
