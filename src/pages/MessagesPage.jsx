@@ -41,6 +41,7 @@ import {
   PhoneMissed,
   Reply,
   SmilePlus,
+  ChevronDown,
 } from "lucide-react";
 import { fetchCallHistory as apiFetchCallHistory } from "../callsApi.js";
 
@@ -1150,7 +1151,12 @@ export default function MessagesPage({ darkMode, conversations, setConversations
     return [...msgItems, ...callItems].sort((a, b) => a.ts - b.ts || a.idx - b.idx);
   }, [messagesToRender, callHistory]);
 
-  const loadActiveThread = useCallback(async (userId) => {
+  // Bumped once each time a chat is OPENED and its messages have loaded, so
+  // the scroll effect below can place the view (unread divider / bottom)
+  // exactly once per open — not on every later refresh or new message.
+  const [openScrollNonce, setOpenScrollNonce] = useState(0);
+
+  const loadActiveThread = useCallback(async (userId, { scrollOnLoad = false } = {}) => {
     if (!userId) return;
     try {
       const msgs = await fetchThread(userId);
@@ -1161,6 +1167,7 @@ export default function MessagesPage({ darkMode, conversations, setConversations
       setFirstUnreadMessageId(firstUnread ? firstUnread.id : null);
       setUnreadMarkerCount((msgs || []).filter((m) => !m.isMine && !m.is_read).length);
       setApiThread(msgs || []);
+      if (scrollOnLoad) setOpenScrollNonce((n) => n + 1);
       await markThreadRead(userId);
     } catch (err) {
       console.error("Could not fetch thread:", err);
@@ -1169,7 +1176,7 @@ export default function MessagesPage({ darkMode, conversations, setConversations
 
   useEffect(() => {
     if (activePartnerId) {
-      loadActiveThread(activePartnerId);
+      loadActiveThread(activePartnerId, { scrollOnLoad: true });
     } else {
       setApiThread([]);
       setFirstUnreadMessageId(null);
@@ -1353,19 +1360,85 @@ export default function MessagesPage({ darkMode, conversations, setConversations
   const draftRef = useAutoGrowTextarea(draft, 120, `${mobileView}:${activeId}`);
   const [panelRef, mobilePanelHeight] = useMobileFillHeight(8);
 
+  // ---- Scroll behaviour (WhatsApp-style) -------------------------------
+  // 1) When a chat is opened: land on the "X unread messages" divider if
+  //    there is one, otherwise on the latest message.
+  // 2) When a new message arrives later: follow it to the bottom only if the
+  //    reader is already at the bottom (or it's their own message). If they
+  //    scrolled up to read history, leave them there and show the
+  //    down-arrow button with a "new messages" count instead.
+  const [showScrollDown, setShowScrollDown] = useState(false);
+  const [newWhileAway, setNewWhileAway] = useState(0);
+  const nearBottomRef = useRef(true);
+  const prevTimelineLenRef = useRef(0);
+
+  function scrollToBottom(smooth = false) {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: smooth ? "smooth" : "auto" });
+    nearBottomRef.current = true;
+    setShowScrollDown(false);
+    setNewWhileAway(0);
+  }
+
+  function handleThreadScroll() {
+    const el = scrollRef.current;
+    if (!el) return;
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const near = distance < 120;
+    nearBottomRef.current = near;
+    setShowScrollDown(distance > 250);
+    if (near) setNewWhileAway(0);
+  }
+
+  // (1) chat opened + its messages loaded
   useEffect(() => {
-    // Land on the "X unread messages" divider when one was just captured
-    // for this conversation-open (WhatsApp-style); otherwise jump straight
-    // to the latest message. Was previously keyed off `active?.messages?.length`,
-    // which only exists for the old mock data — for real API threads that
-    // value never changes, so this fired once (before the thread had even
-    // loaded) and never again, leaving the view stuck at the top.
-    if (unreadDividerRef.current) {
-      unreadDividerRef.current.scrollIntoView({ block: "start" });
-    } else if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    const el = scrollRef.current;
+    if (!el) return;
+    setNewWhileAway(0);
+    const divider = unreadDividerRef.current;
+    if (divider) {
+      // Scroll only the message panel (not the whole page) so the divider
+      // sits near the top with a little context above it.
+      const top = divider.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop;
+      el.scrollTop = Math.max(0, top - 12);
+      handleThreadScroll();
+    } else {
+      scrollToBottom(false);
     }
-  }, [activeId, timelineItems.length, unreadMarkerCount]);
+    prevTimelineLenRef.current = timelineItems.length;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openScrollNonce]);
+
+  // (2) messages added after the chat was already open
+  useEffect(() => {
+    const prevLen = prevTimelineLenRef.current;
+    const len = timelineItems.length;
+    prevTimelineLenRef.current = len;
+    if (len <= prevLen || prevLen === 0) return;
+    const last = timelineItems[len - 1];
+    const lastIsMine = !!(last && last.data && last.data.isMine);
+    if (nearBottomRef.current || lastIsMine) {
+      scrollToBottom(false);
+    } else if (last && last.kind !== "call") {
+      setNewWhileAway((n) => n + (len - prevLen));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timelineItems.length]);
+
+  // Switching chats: reset until the new thread has loaded.
+  useEffect(() => {
+    prevTimelineLenRef.current = 0;
+    nearBottomRef.current = true;
+    setShowScrollDown(false);
+    setNewWhileAway(0);
+    // Local (non-server) chats have no "thread loaded" signal — just go to the bottom.
+    if (!activePartnerId && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      prevTimelineLenRef.current = timelineItems.length;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId]);
 
   // If the active conversation was removed elsewhere (or none was selected
   // yet), fall back to the first available conversation.
@@ -2244,7 +2317,8 @@ export default function MessagesPage({ darkMode, conversations, setConversations
               </div>
             </div>
 
-            <div ref={scrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-4 sm:px-4">
+            <div className="relative flex min-h-0 flex-1 flex-col">
+            <div ref={scrollRef} onScroll={handleThreadScroll} className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-4 sm:px-4">
               {timelineItems.length === 0 && (
                 <p className={`pt-10 text-center text-[11px] ${subtleText}`}>No messages yet. Say hi 👋</p>
               )}
@@ -2524,6 +2598,25 @@ export default function MessagesPage({ darkMode, conversations, setConversations
                   );
                 });
               })()}
+            </div>
+            {showScrollDown && (
+              <button
+                type="button"
+                onClick={() => scrollToBottom(true)}
+                aria-label="Scroll to latest message"
+                title="Scroll to latest message"
+                className={`absolute bottom-3 right-4 z-20 flex h-9 w-9 items-center justify-center rounded-full border shadow-lg transition hover:scale-105 ${
+                  darkMode ? "border-slate-700 bg-slate-800 text-slate-200" : "border-slate-200 bg-white text-slate-600"
+                }`}
+              >
+                <ChevronDown size={18} />
+                {newWhileAway > 0 && (
+                  <span className="absolute -top-2 -right-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-violet-600 px-1 text-[9px] font-bold text-white">
+                    {newWhileAway > 99 ? "99+" : newWhileAway}
+                  </span>
+                )}
+              </button>
+            )}
             </div>
 
             <div className={`shrink-0 border-t ${borderCol}`}>
