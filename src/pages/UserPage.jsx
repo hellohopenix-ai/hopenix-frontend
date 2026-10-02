@@ -1015,7 +1015,7 @@ export default function UserPage({ darkMode = false }) {
   const removeUser = (id) => {
     ctxRemoveUser(id);
     setOpenActionMenu(null);
-    showToast("User removed.", "error");
+    showToast("User deactivated. Their data and messages are kept.", "error");
   };
 
   // Approve / role-update actions triggered from inside the bio-data
@@ -1899,7 +1899,7 @@ export default function UserPage({ darkMode = false }) {
             {actionMenuUser.status === "active" ? "Deactivate" : "Reactivate"}
           </button>
           <button onClick={() => removeUser(actionMenuUser.id)} className="w-full text-left px-3 py-2 text-sm text-rose-600 hover:bg-rose-50">
-            Remove user
+            Remove (deactivate)
           </button>
         </div>
       )}

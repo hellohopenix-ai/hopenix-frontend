@@ -1484,7 +1484,7 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
                             onClick={() =>
                               setConfirm({
                                 title: "Remove user",
-                                message: `Remove ${u.name} from your organization? They will lose access immediately.`,
+                                message: `Remove ${u.name}? Their account will be deactivated and they will lose access immediately. All their data and messages stay saved, and you can reactivate them later.`,
                                 danger: true,
                                 confirmLabel: "Remove",
                                 onConfirm: async () => {
@@ -1493,7 +1493,7 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
                                   if (result?.success === false) {
                                     showToast(result.error || "Couldn't remove user");
                                   } else {
-                                    showToast("User removed");
+                                    showToast("User deactivated. Data and messages are kept.");
                                   }
                                 },
                               })
