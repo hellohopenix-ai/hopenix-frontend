@@ -1536,6 +1536,26 @@ export default function ProjectsPage({ darkMode = false, conversations, setConve
       cancelled = true;
     };
   }, []);
+  // Resolves a module assignee NAME to a real user id. A client that has no
+  // login yet gets one created on the spot (no password, see
+  // EnsureClientUserView) so the module can be assigned to it.
+  async function resolveAssigneeId(name) {
+    if (!name) return null;
+    const staff = (approvedUsers || []).find((u) => u.name === name);
+    if (staff) return staff.id;
+    const c = clientUsers.find((u) => u.name === name);
+    if (!c) return null;
+    if (c.id != null) return c.id;
+    const token = localStorage.getItem("hopenix_auth_token");
+    const res = await fetch(`${API_ROOT}/api/auth/clients/${c.clientId}/ensure-user/`, {
+      method: "POST",
+      headers: { Authorization: `Token ${token}` },
+    });
+    if (!res.ok) return null;
+    const made = await res.json();
+    setClientUsers((prev) => prev.map((u) => (u.clientId === c.clientId ? { ...u, id: made.id } : u)));
+    return made.id;
+  }
   const clientAssigneeNames = useMemo(
     () => Array.from(new Set(clientUsers.map((u) => u.name).filter(Boolean))),
     [clientUsers]
@@ -2361,7 +2381,7 @@ export default function ProjectsPage({ darkMode = false, conversations, setConve
       try {
         const modulePayload = {
           name: m.name,
-          assignee: nameToId(assignableUsers, m.assignee),
+          assignee: await resolveAssigneeId(m.assignee),
           status: m.status || "Pending",
           priority: m.priority || "Medium",
           due_date: m.dueDate || null,
@@ -2498,7 +2518,7 @@ export default function ProjectsPage({ darkMode = false, conversations, setConve
       const isNewModule = typeof m.id === "string" && m.id.startsWith("m-");
       const modulePayload = {
         name: m.name,
-        assignee: nameToId(assignableUsers, m.assignee),
+        assignee: await resolveAssigneeId(m.assignee),
         status: m.status || "Pending",
         priority: m.priority || "Medium",
         due_date: m.dueDate || null,
