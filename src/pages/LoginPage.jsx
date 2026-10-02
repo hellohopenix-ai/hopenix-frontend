@@ -606,6 +606,10 @@ export default function LoginPage() {
   const [socialLoading, setSocialLoading] = useState(null); // "google" | null
   const [otpOpen, setOtpOpen] = useState(false);
   const [pendingUser, setPendingUser] = useState(null); // set once loginUser() succeeds, used once OTP is verified
+  // Two-factor (authenticator app) — only shown when the server says this account has it on.
+  const [twoFactorOpen, setTwoFactorOpen] = useState(false);
+  const [twoFactorCode, setTwoFactorCode] = useState("");
+  const [pendingGoogleToken, setPendingGoogleToken] = useState(null);
 
   const emailStatus = useEmailVerification(email);
 
@@ -636,26 +640,46 @@ export default function LoginPage() {
   const handleSubmit = async (e) => {
     e.preventDefault();
 
-    if (!isValidEmailFormat(email)) {
-      setError("Please enter a valid email address.");
-      return;
+    // (A Google sign-in that only needs its 2FA code has no email/password to check.)
+    if (!pendingGoogleToken) {
+      if (!isValidEmailFormat(email)) {
+        setError("Please enter a valid email address.");
+        return;
+      }
+      if (emailStatus === "invalid-domain") {
+        setError("This email domain doesn't appear to exist. Please double-check it.");
+        return;
+      }
+      if (!isPasswordValid(password)) {
+        setError("Password must be at least 8 characters and include an uppercase and a lowercase letter.");
+        return;
+      }
     }
-    if (emailStatus === "invalid-domain") {
-      setError("This email domain doesn't appear to exist. Please double-check it.");
-      return;
-    }
-    if (!isPasswordValid(password)) {
-      setError("Password must be at least 8 characters and include an uppercase and a lowercase letter.");
+
+    if (twoFactorOpen && twoFactorCode.replace(/[\s-]/g, "").length < 6) {
+      setError("Enter the 6-digit code from your authenticator app (or a backup code).");
       return;
     }
 
     setError("");
     setLoggingIn(true);
-    const result = await loginUser(email, password);
+    // Signed in with Google earlier and only the code was missing: finish that, not a password login.
+    const result = pendingGoogleToken
+      ? await loginWithGoogle(pendingGoogleToken, twoFactorCode.trim())
+      : await loginUser(email, password, twoFactorOpen ? twoFactorCode.trim() : undefined);
     setLoggingIn(false);
 
+    if (result.otpRequired) {
+      setTwoFactorOpen(true);
+      return;
+    }
     if (!result.success) {
       setError(result.error);
+      return;
+    }
+    if (pendingGoogleToken) {
+      setPendingGoogleToken(null);
+      routeAfterLogin(result.user);
       return;
     }
 
@@ -675,6 +699,12 @@ export default function LoginPage() {
       setSocialLoading("google");
       const result = await loginWithGoogle(tokenResponse.access_token);
       setSocialLoading(null);
+      if (result.otpRequired) {
+        setPendingGoogleToken(tokenResponse.access_token);
+        setTwoFactorOpen(true);
+        setError("");
+        return;
+      }
       if (!result.success) {
         setError(result.error);
         return;
@@ -892,6 +922,25 @@ export default function LoginPage() {
                 Must be 8+ characters with an uppercase and a lowercase letter.
               </p>
             </div>
+
+            {twoFactorOpen && (
+              <div>
+                <label className="block text-sm font-medium text-slate-200 mb-2">Authenticator code</label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  autoFocus
+                  value={twoFactorCode}
+                  onChange={(e) => setTwoFactorCode(e.target.value.slice(0, 12))}
+                  placeholder="123456"
+                  className="w-full bg-[#121022] border border-[#2a2740] rounded-xl py-3 px-4 text-sm tracking-[0.3em] text-white placeholder:text-slate-500 placeholder:tracking-normal outline-none focus:border-violet-500"
+                />
+                <p className="mt-1.5 text-[11px] text-slate-500">
+                  Open your authenticator app and type the 6-digit code. Lost your phone? Use one of your backup codes.
+                </p>
+              </div>
+            )}
 
             <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
               <label className="flex items-center gap-2.5 cursor-pointer select-none">

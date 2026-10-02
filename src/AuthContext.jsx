@@ -923,12 +923,15 @@ export function AuthProvider({ children }) {
    *  pending/rejected users here - the calling page decides where to
    *  route them based on user.status, so "pending" users can still see
    *  a waiting screen instead of a raw error. */
-  async function loginUser(email, password) {
+  async function loginUser(email, password, otp) {
     try {
       const data = await apiFetch("/login/", {
         method: "POST",
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify(otp ? { email, password, otp } : { email, password }),
       });
+      // Two-factor is on for this account: the server wants the authenticator
+      // code before it hands out a token.
+      if (data.otp_required) return { success: false, otpRequired: true, error: data.error || "" };
       localStorage.setItem(TOKEN_KEY, data.token);
       await hydrateFlags({ kind: "staff", ownerId: data.user?.id });
       await applyMyAccess(data.user);
@@ -946,12 +949,13 @@ export function AuthProvider({ children }) {
    *  the frontend's useGoogleLogin() hook. Only logs an EXISTING account
    *  in - the backend returns an error if no account exists yet with
    *  that email, telling them to sign up instead. */
-  async function loginWithGoogle(accessToken) {
+  async function loginWithGoogle(accessToken, otp) {
     try {
       const data = await apiFetch("/google-login/", {
         method: "POST",
-        body: JSON.stringify({ access_token: accessToken }),
+        body: JSON.stringify(otp ? { access_token: accessToken, otp } : { access_token: accessToken }),
       });
+      if (data.otp_required) return { success: false, otpRequired: true, error: data.error || "" };
       localStorage.setItem(TOKEN_KEY, data.token);
       await hydrateFlags({ kind: "staff", ownerId: data.user?.id });
       await applyMyAccess(data.user);
@@ -1342,6 +1346,37 @@ export function AuthProvider({ children }) {
       return { success: false, error: err.message };
     }
   }
+
+  /* ---- Security: real two-factor, sign-in history, logs, system info ---- */
+  const settingsCall = async (path, options) => {
+    try {
+      const data = await apiFetch(path, options, SETTINGS_API_BASE_URL);
+      return { success: true, data };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  };
+  const postJSON = (path, body) => settingsCall(path, { method: "POST", body: JSON.stringify(body || {}) });
+
+  const setupTwoFactor = () => postJSON("/security/2fa/setup/");
+  const enableTwoFactor = (code) => postJSON("/security/2fa/enable/", { code });
+  const disableTwoFactor = (password, code) => postJSON("/security/2fa/disable/", { password, code });
+  const regenerateBackupCodes = (password, code) => postJSON("/security/2fa/backup-codes/", { password, code });
+  const getSessions = () => settingsCall("/security/sessions/");
+  /** Signs every OTHER device out. The server issues a new token for this one. */
+  async function signOutOtherDevices() {
+    const res = await postJSON("/security/sessions/revoke-others/");
+    if (res.success && res.data?.token) localStorage.setItem(TOKEN_KEY, res.data.token);
+    return res;
+  }
+  const getSystemLogs = (level = "all") => settingsCall(`/logs/?level=${encodeURIComponent(level)}&limit=60`);
+  const getSystemInfo = () => settingsCall("/system-info/");
+  const getAccountDeletion = () => settingsCall("/account/delete-request/");
+  const requestAccountDeletion = (password) => postJSON("/account/delete-request/", { password });
+  const cancelAccountDeletion = () => settingsCall("/account/delete-request/", { method: "DELETE" });
+  const resetSettingsOnServer = () => postJSON("/reset/");
+  /** Saved module settings for pages outside Settings (categories, rules...). */
+  const getAppConfig = () => settingsCall("/app-config/");
 
   /* ---- Notifications: live status + real test ------------------------- */
   async function getNotificationStatus() {
@@ -2063,6 +2098,19 @@ export function AuthProvider({ children }) {
         updateCompanySettings,
         getNotificationPreferences,
         updateNotificationPreferences,
+        setupTwoFactor,
+        enableTwoFactor,
+        disableTwoFactor,
+        regenerateBackupCodes,
+        getSessions,
+        signOutOtherDevices,
+        getSystemLogs,
+        getSystemInfo,
+        getAccountDeletion,
+        requestAccountDeletion,
+        cancelAccountDeletion,
+        resetSettingsOnServer,
+        getAppConfig,
         getNotificationStatus,
         sendTestNotification,
         getDepartments,

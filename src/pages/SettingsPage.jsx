@@ -207,11 +207,11 @@ const DEFAULT_NOTIFICATIONS = [
 
 const DEFAULT_SECURITY = {
   twoFactor: false,
-  sessions: [
-    { id: 1, device: "Chrome on Windows", location: "Lahore, Pakistan", lastActive: "Active now", current: true },
-    { id: 2, device: "Safari on iPhone", location: "Lahore, Pakistan", lastActive: "2 hours ago", current: false },
-    { id: 3, device: "Chrome on MacOS", location: "Karachi, Pakistan", lastActive: "3 days ago", current: false },
-  ],
+  sessions: [], // real sign-in history is loaded from the server (GET /security/sessions/)
+};
+const formatDateTime = (iso) => {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleString(undefined, { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
 };
 
 // Billing is entirely server-driven (GET /api/settings/billing/): plan, price,
@@ -238,14 +238,6 @@ const formatDate = (iso) => {
   return Number.isNaN(d.getTime()) ? "—" : d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 };
 
-const SYSTEM_LOGS = [
-  { id: 1, level: "info", message: "Backup completed successfully", time: "Today, 03:00 AM" },
-  { id: 2, level: "warning", message: "Storage usage exceeded 20%", time: "Yesterday, 6:45 PM" },
-  { id: 3, level: "info", message: "12 users logged in", time: "Yesterday, 9:00 AM" },
-  { id: 4, level: "error", message: "Failed payment attempt for invoice #1042", time: "2 days ago" },
-  { id: 5, level: "info", message: "System updated to v2.4.1", time: "May 20, 2025" },
-  { id: 6, level: "warning", message: "Unusual login location detected", time: "May 19, 2025" },
-];
 
 // Real storage numbers come from the backend (GET /api/settings/storage/).
 function formatBytes(bytes) {
@@ -549,7 +541,18 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
     deleteDepartment,
     getStorageUsage,
     getSecuritySettings,
-    updateSecuritySettings,
+    setupTwoFactor,
+    enableTwoFactor,
+    disableTwoFactor,
+    regenerateBackupCodes,
+    getSessions,
+    signOutOtherDevices,
+    getSystemLogs,
+    getSystemInfo,
+    getAccountDeletion,
+    requestAccountDeletion,
+    cancelAccountDeletion,
+    resetSettingsOnServer,
     getBillingInfo,
     updateBillingInfo,
     getProjectSettings,
@@ -677,6 +680,7 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
       if (notifRes.success && Array.isArray(notifRes.data) && notifRes.data.length) setNotifications(notifRes.data);
       if (secRes.success && secRes.data) {
         setSecurity((s) => ({ ...s, twoFactor: !!secRes.data.two_factor_enabled }));
+        setBackupLeft(Number(secRes.data.backup_codes_left) || 0);
       }
       if (billingRes.success && billingRes.data) setBilling(billingRes.data);
       if (projRes.success && projRes.data) setProjectSettings((s) => ({ ...s, ...projRes.data }));
@@ -707,8 +711,22 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
   const [confirm, setConfirm] = useState(null); // { title, message, onConfirm, danger, confirmLabel }
   const [userSearch, setUserSearch] = useState("");
   const [logFilter, setLogFilter] = useState("all");
+  const [logs, setLogs] = useState([]);
+  const [logsLoading, setLogsLoading] = useState(false);
+  const [logsError, setLogsError] = useState("");
+  const [sessions, setSessions] = useState([]);
+  const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [sessionsError, setSessionsError] = useState("");
+  const [sysInfo, setSysInfo] = useState(null);
+  const [sysInfoError, setSysInfoError] = useState("");
+  const [twoFa, setTwoFa] = useState({ setup: null, code: "", busy: false, error: "", backupCodes: null });
+  const [twoFaOff, setTwoFaOff] = useState({ password: "", code: "", busy: false, error: "" });
+  const [backupLeft, setBackupLeft] = useState(0);
+  const [deletion, setDeletion] = useState({ requested: false, requested_at: null });
+  const [deletePassword, setDeletePassword] = useState("");
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
-  const [accountDeleted, setAccountDeleted] = useState(false);
   const [pwForm, setPwForm] = useState({ current: "", next: "", confirm: "" });
   const [showPw, setShowPw] = useState({ current: false, next: false, confirm: false });
   const [pwSaving, setPwSaving] = useState(false);
@@ -717,6 +735,135 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
   function showToast(msg) {
     setToast(msg);
     setTimeout(() => setToast(""), 2400);
+  }
+
+  /* ---------------- Real system logs / system information ---------------- */
+  async function loadLogs(level = logFilter) {
+    setLogsLoading(true);
+    const res = await getSystemLogs(level);
+    if (res.success) {
+      setLogs(res.data.logs || []);
+      setLogsError("");
+    } else {
+      setLogsError(res.error || "Couldn't load the logs.");
+    }
+    setLogsLoading(false);
+  }
+  useEffect(() => {
+    if (modal?.type === "logs") loadLogs(logFilter);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modal?.type, logFilter]);
+
+  async function loadSysInfo() {
+    const res = await getSystemInfo();
+    if (res.success) {
+      setSysInfo(res.data);
+      setSysInfoError("");
+    } else {
+      setSysInfoError(res.error || "Unavailable");
+    }
+  }
+  useEffect(() => {
+    if (hasFullSettingsAccess) loadSysInfo();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasFullSettingsAccess]);
+
+  /* ---------------- Real sign-in history ---------------- */
+  async function loadSessions() {
+    setSessionsLoading(true);
+    const res = await getSessions();
+    if (res.success) {
+      setSessions(res.data.sessions || []);
+      setSessionsError("");
+    } else {
+      setSessionsError(res.error || "Couldn't load sign-ins.");
+    }
+    setSessionsLoading(false);
+  }
+  useEffect(() => {
+    if (tab === "security") loadSessions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
+
+  async function handleSignOutOthers() {
+    const res = await signOutOtherDevices();
+    closeConfirm();
+    showToast(res.success ? "Signed out of all other devices" : res.error || "Couldn't sign out other devices");
+    if (res.success) loadSessions();
+  }
+
+  /* ---------------- Real two-factor authentication ---------------- */
+  async function startTwoFactor() {
+    setTwoFa({ setup: null, code: "", busy: true, error: "", backupCodes: null });
+    setModal({ type: "enable2fa" });
+    const res = await setupTwoFactor();
+    setTwoFa((t) => ({ ...t, busy: false, setup: res.success ? res.data : null, error: res.success ? "" : res.error || "Couldn't start setup." }));
+  }
+  async function confirmTwoFactor() {
+    setTwoFa((t) => ({ ...t, busy: true, error: "" }));
+    const res = await enableTwoFactor(twoFa.code);
+    if (res.success) {
+      setSecurity((sec) => ({ ...sec, twoFactor: true }));
+      setBackupLeft((res.data.backup_codes || []).length);
+      setTwoFa((t) => ({ ...t, busy: false, backupCodes: res.data.backup_codes || [], setup: null, code: "" }));
+    } else {
+      setTwoFa((t) => ({ ...t, busy: false, error: res.error || "That code isn't right." }));
+    }
+  }
+  async function confirmDisableTwoFactor() {
+    setTwoFaOff((t) => ({ ...t, busy: true, error: "" }));
+    const res = await disableTwoFactor(twoFaOff.password, twoFaOff.code);
+    if (res.success) {
+      setSecurity((sec) => ({ ...sec, twoFactor: false }));
+      setBackupLeft(0);
+      closeModal();
+      showToast("Two-factor authentication turned off");
+    } else {
+      setTwoFaOff((t) => ({ ...t, busy: false, error: res.error || "Couldn't turn it off." }));
+    }
+  }
+  async function newBackupCodes() {
+    setTwoFaOff((t) => ({ ...t, busy: true, error: "" }));
+    const res = await regenerateBackupCodes(twoFaOff.password, twoFaOff.code);
+    if (res.success) {
+      setBackupLeft((res.data.backup_codes || []).length);
+      setTwoFa({ setup: null, code: "", busy: false, error: "", backupCodes: res.data.backup_codes || [] });
+      setTwoFaOff({ password: "", code: "", busy: false, error: "" });
+      setModal({ type: "enable2fa" });
+    } else {
+      setTwoFaOff((t) => ({ ...t, busy: false, error: res.error || "Couldn't create new codes." }));
+    }
+  }
+
+  /* ---------------- Account deletion REQUEST (nothing is deleted automatically) ---------------- */
+  useEffect(() => {
+    if (!hasFullSettingsAccess) return;
+    getAccountDeletion().then((r) => r.success && setDeletion(r.data));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasFullSettingsAccess]);
+
+  async function submitDeletionRequest() {
+    setDeleteBusy(true);
+    setDeleteError("");
+    const res = await requestAccountDeletion(deletePassword);
+    setDeleteBusy(false);
+    if (res.success) {
+      setDeletion(res.data);
+      setDeletePassword("");
+      closeModal();
+      showToast("Deletion request recorded. Nothing has been deleted.");
+    } else {
+      setDeleteError(res.error || "Couldn't record the request.");
+    }
+  }
+  async function withdrawDeletionRequest() {
+    const res = await cancelAccountDeletion();
+    if (res.success) {
+      setDeletion(res.data);
+      showToast("Deletion request cancelled");
+    } else {
+      showToast(res.error || "Couldn't cancel the request");
+    }
   }
 
   /* ---------------- Real departments ---------------- */
@@ -942,7 +1089,6 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
     const results = await Promise.allSettled([
       updateCompanySettings(company),
       updateNotificationPreferences(notifications),
-      updateSecuritySettings({ two_factor_enabled: security.twoFactor }),
       updateProjectSettings(projectSettings),
       updateTaskSettings(taskSettings),
       updateIncomeSettings(incomeSettings),
@@ -971,27 +1117,23 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
     setTimeout(() => setSaved(false), 2200);
   }
 
-  function resetEverything() {
-    setCompany(DEFAULT_COMPANY);
-    setProfile(DEFAULT_PROFILE);
-    // Users & Roles is real backend data now — nothing local to reset it
-    // to, and doing so would just mismatch the display from the actual
-    // database until the next refreshUsers() call anyway.
-    setProjectSettings(DEFAULT_PROJECT_SETTINGS);
-    setTaskSettings(DEFAULT_TASK_SETTINGS);
-    setIncomeSettings(DEFAULT_INCOME_SETTINGS);
-    setExpenseSettings(DEFAULT_EXPENSE_SETTINGS);
-    setSalesSettings(DEFAULT_SALES_SETTINGS);
-    setNotifications(DEFAULT_NOTIFICATIONS);
-    setSecurity(DEFAULT_SECURITY);
-    setBilling(DEFAULT_BILLING);
-    [
-      "hopenix_company", "hopenix_profile", "hopenix_users", "hopenix_project_settings",
-      "hopenix_task_settings", "hopenix_income_settings", "hopenix_expense_settings", "hopenix_sales_settings",
-      "hopenix_notifications", "hopenix_security", "hopenix_billing",
-    ].forEach((k) => localStorage.removeItem(k));
+  async function resetEverything() {
+    // Resets the saved preferences on the SERVER (Projects/Tasks/Income/Expenses/Sales,
+    // General display options, your notification choices), then reloads so every tab
+    // shows what is really stored. Company name/contact, logo, billing, users and
+    // departments are not touched.
+    const res = await resetSettingsOnServer();
     closeConfirm();
-    showToast("All settings reset to default");
+    if (!res.success) {
+      showToast(res.error || "Couldn't reset settings");
+      return;
+    }
+    [
+      "hopenix_company", "hopenix_profile", "hopenix_project_settings", "hopenix_task_settings",
+      "hopenix_income_settings", "hopenix_expense_settings", "hopenix_sales_settings", "hopenix_notifications",
+    ].forEach((k) => localStorage.removeItem(k));
+    showToast("Settings reset to defaults");
+    setTimeout(() => window.location.reload(), 700);
   }
 
   function downloadInvoice(row) {
@@ -1017,7 +1159,6 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
   const filteredUsers = users.filter(
     (u) => u.name.toLowerCase().includes(userSearch.toLowerCase()) || u.email.toLowerCase().includes(userSearch.toLowerCase())
   );
-  const filteredLogs = logFilter === "all" ? SYSTEM_LOGS : SYSTEM_LOGS.filter((l) => l.level === logFilter);
   const storagePct = storage ? Math.min(100, Math.max(storage.used_bytes > 0 ? 1 : 0, Math.round(storage.percent || 0))) : 0;
 
   const saveBtn = (
@@ -1459,9 +1600,9 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
                 </select>
               </SettingRow>
               <ToggleRow title="Auto-archive Completed Projects" desc="Move finished projects to archive after 30 days" checked={projectSettings.autoArchive} onChange={(v) => setProjectSettings((p) => ({ ...p, autoArchive: v }))} darkMode={darkMode} />
-              <ToggleRow title="Require Project Code" desc="Enforce a unique code when creating a project" checked={projectSettings.requireCode} onChange={(v) => setProjectSettings((p) => ({ ...p, requireCode: v }))} darkMode={darkMode} />
-              <ToggleRow title="Allow Guest Access" desc="Let clients view project progress without an account" checked={projectSettings.allowGuestAccess} onChange={(v) => setProjectSettings((p) => ({ ...p, allowGuestAccess: v }))} darkMode={darkMode} />
-              <ToggleRow title="Enable Time Tracking" desc="Track hours logged against project tasks" checked={projectSettings.timeTracking} onChange={(v) => setProjectSettings((p) => ({ ...p, timeTracking: v }))} darkMode={darkMode} last />
+              <ToggleRow title="Require Project Code" desc="Enforce a unique code when creating a project — not active yet" checked={projectSettings.requireCode} onChange={(v) => setProjectSettings((p) => ({ ...p, requireCode: v }))} darkMode={darkMode} />
+              <ToggleRow title="Allow Guest Access" desc="Let clients view project progress without an account — not active yet" checked={projectSettings.allowGuestAccess} onChange={(v) => setProjectSettings((p) => ({ ...p, allowGuestAccess: v }))} darkMode={darkMode} />
+              <ToggleRow title="Enable Time Tracking" desc="Track hours logged against project tasks — not active yet" checked={projectSettings.timeTracking} onChange={(v) => setProjectSettings((p) => ({ ...p, timeTracking: v }))} darkMode={darkMode} last />
             </div>
             <div className={`mt-4 pt-4 border-t ${borderClass}`}>
               <h3 className={`text-[13px] font-semibold mb-2.5 ${cardText}`}>Project Categories</h3>
@@ -1489,7 +1630,7 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
               <ToggleRow title="Auto-assign to Project Lead" desc="New tasks default to the project's lead" checked={taskSettings.autoAssignLead} onChange={(v) => setTaskSettings((t) => ({ ...t, autoAssignLead: v }))} darkMode={darkMode} />
               <ToggleRow title="Allow Subtasks" desc="Let users break tasks into smaller subtasks" checked={taskSettings.allowSubtasks} onChange={(v) => setTaskSettings((t) => ({ ...t, allowSubtasks: v }))} darkMode={darkMode} />
               <ToggleRow title="Require Due Date" desc="Tasks can't be created without a due date" checked={taskSettings.requireDueDate} onChange={(v) => setTaskSettings((t) => ({ ...t, requireDueDate: v }))} darkMode={darkMode} />
-              <ToggleRow title="Send Reminders" desc="Notify assignees before a task is due" checked={taskSettings.sendReminders} onChange={(v) => setTaskSettings((t) => ({ ...t, sendReminders: v }))} darkMode={darkMode} last />
+              <ToggleRow title="Send Reminders" desc="Notify assignees before a task is due — not active yet" checked={taskSettings.sendReminders} onChange={(v) => setTaskSettings((t) => ({ ...t, sendReminders: v }))} darkMode={darkMode} last />
             </div>
             <div className={`mt-4 pt-4 border-t ${borderClass}`}>
               <h3 className={`text-[13px] font-semibold mb-2.5 ${cardText}`}>Task Workflow Statuses</h3>
@@ -1514,8 +1655,8 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
                   {["Cash", "Bank - HBL", "Bank - Meezan", "PayPal"].map((v) => <option key={v}>{v}</option>)}
                 </select>
               </SettingRow>
-              <ToggleRow title="Enable Recurring Income" desc="Allow income entries to repeat automatically" checked={incomeSettings.recurringIncome} onChange={(v) => setIncomeSettings((s) => ({ ...s, recurringIncome: v }))} darkMode={darkMode} />
-              <ToggleRow title="Auto-generate Invoice" desc="Create an invoice automatically for new income" checked={incomeSettings.autoInvoice} onChange={(v) => setIncomeSettings((s) => ({ ...s, autoInvoice: v }))} darkMode={darkMode} last />
+              <ToggleRow title="Enable Recurring Income" desc="Allow income entries to repeat automatically — not active yet" checked={incomeSettings.recurringIncome} onChange={(v) => setIncomeSettings((s) => ({ ...s, recurringIncome: v }))} darkMode={darkMode} />
+              <ToggleRow title="Auto-generate Invoice" desc="Create an invoice automatically for new income — not active yet" checked={incomeSettings.autoInvoice} onChange={(v) => setIncomeSettings((s) => ({ ...s, autoInvoice: v }))} darkMode={darkMode} last />
             </div>
             <div className={`mt-4 pt-4 border-t ${borderClass}`}>
               <h3 className={`text-[13px] font-semibold mb-2.5 ${cardText}`}>Income Categories</h3>
@@ -1546,8 +1687,8 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
                   />
                 </div>
               </SettingRow>
-              <ToggleRow title="Require Receipt Upload" desc="A receipt image is mandatory for every expense" checked={expenseSettings.requireReceipt} onChange={(v) => setExpenseSettings((s) => ({ ...s, requireReceipt: v }))} darkMode={darkMode} />
-              <ToggleRow title="Auto-categorize Expenses" desc="Let the AI Assistant suggest a category" checked={expenseSettings.autoCategorize} onChange={(v) => setExpenseSettings((s) => ({ ...s, autoCategorize: v }))} darkMode={darkMode} last />
+              <ToggleRow title="Require Receipt Upload" desc="No expense can be approved until a receipt is uploaded" checked={expenseSettings.requireReceipt} onChange={(v) => setExpenseSettings((s) => ({ ...s, requireReceipt: v }))} darkMode={darkMode} />
+              <ToggleRow title="Auto-categorize Expenses" desc="Let the AI Assistant suggest a category — not active yet" checked={expenseSettings.autoCategorize} onChange={(v) => setExpenseSettings((s) => ({ ...s, autoCategorize: v }))} darkMode={darkMode} last />
             </div>
             <div className={`mt-4 pt-4 border-t ${borderClass}`}>
               <h3 className={`text-[13px] font-semibold mb-2.5 ${cardText}`}>Expense Categories</h3>
@@ -1583,8 +1724,8 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
               </Field>
             </div>
             <div className={`mt-4 pt-4 border-t ${borderClass}`}>
-              <ToggleRow title="Auto-generate Invoice Number" desc="Number new invoices sequentially" checked={salesSettings.autoInvoiceNumber} onChange={(v) => setSalesSettings((s) => ({ ...s, autoInvoiceNumber: v }))} darkMode={darkMode} />
-              <ToggleRow title="Send Payment Reminders" desc="Remind clients automatically before due date" checked={salesSettings.paymentReminders} onChange={(v) => setSalesSettings((s) => ({ ...s, paymentReminders: v }))} darkMode={darkMode} last />
+              <ToggleRow title="Auto-generate Invoice Number" desc="Number new invoices sequentially — not active yet" checked={salesSettings.autoInvoiceNumber} onChange={(v) => setSalesSettings((s) => ({ ...s, autoInvoiceNumber: v }))} darkMode={darkMode} />
+              <ToggleRow title="Send Payment Reminders" desc="Remind clients automatically before due date — not active yet" checked={salesSettings.paymentReminders} onChange={(v) => setSalesSettings((s) => ({ ...s, paymentReminders: v }))} darkMode={darkMode} last />
             </div>
           </div>
         )}
@@ -1753,53 +1894,56 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
               <h3 className={`text-[13px] font-semibold ${cardText}`}>Two-Factor Authentication</h3>
               <ToggleRow
                 title={security.twoFactor ? "2FA is enabled" : "Enable Two-Factor Authentication"}
-                desc="Add an extra layer of security to your account"
+                desc={security.twoFactor ? "A code from your authenticator app is asked at every sign-in" : "Ask for an authenticator-app code at sign-in (Google Authenticator, Authy, Microsoft Authenticator...)"}
                 checked={security.twoFactor}
-                onChange={(v) =>
-                  v
-                    ? setModal({ type: "enable2fa" })
-                    : setConfirm({
-                        title: "Disable 2FA",
-                        message: "Turning off two-factor authentication makes your account easier to compromise. Continue?",
-                        danger: true,
-                        confirmLabel: "Disable",
-                        onConfirm: () => {
-                          setSecurity((s) => ({ ...s, twoFactor: false }));
-                          closeConfirm();
-                          showToast("Two-factor authentication disabled");
-                        },
-                      })
-                }
+                onChange={(v) => {
+                  if (v) return startTwoFactor();
+                  setTwoFaOff({ password: "", code: "", busy: false, error: "" });
+                  setModal({ type: "disable2fa" });
+                }}
                 darkMode={darkMode}
                 last
               />
+              {security.twoFactor && (
+                <p className={`mt-2 text-[10.5px] ${subtleText}`}>
+                  {backupLeft} backup code{backupLeft === 1 ? "" : "s"} left.{" "}
+                  <button
+                    onClick={() => {
+                      setTwoFaOff({ password: "", code: "", busy: false, error: "" });
+                      setModal({ type: "backupCodes" });
+                    }}
+                    className="font-semibold text-violet-500 hover:text-violet-400"
+                  >
+                    Get new backup codes
+                  </button>
+                </p>
+              )}
             </div>
 
             <div className={`rounded-xl ${company.compactMode ? "p-3 sm:p-3.5" : "p-4 sm:p-5"} shadow-sm ${card}`}>
               <div className="flex items-center justify-between">
-                <h3 className={`text-[13px] font-semibold ${cardText}`}>Active Sessions</h3>
+                <h3 className={`text-[13px] font-semibold ${cardText}`}>Recent Sign-ins</h3>
                 <button
                   onClick={() =>
                     setConfirm({
-                      title: "Revoke other sessions",
-                      message: "You'll be signed out on all other devices except this one.",
+                      title: "Sign out other devices",
+                      message: "Every other device and browser signed in to your account will be signed out. This device stays signed in.",
                       danger: true,
-                      confirmLabel: "Revoke All",
-                      onConfirm: () => {
-                        setSecurity((s) => ({ ...s, sessions: s.sessions.filter((x) => x.current) }));
-                        closeConfirm();
-                        showToast("Other sessions revoked");
-                      },
+                      confirmLabel: "Sign out others",
+                      onConfirm: handleSignOutOthers,
                     })
                   }
                   className={`text-[11px] font-semibold ${darkMode ? "text-rose-400 hover:text-rose-300" : "text-rose-500 hover:text-rose-600"}`}
                 >
-                  Revoke All Others
+                  Sign out other devices
                 </button>
               </div>
               <div className="mt-3 space-y-1.5">
-                {security.sessions.map((s) => {
-                  const DeviceIcon = s.device.toLowerCase().includes("iphone") || s.device.toLowerCase().includes("android") ? Smartphone : Monitor;
+                {sessionsLoading && sessions.length === 0 && <p className={`text-[11px] ${subtleText}`}>Loading...</p>}
+                {sessionsError && <p className="text-[11px] text-rose-500">{sessionsError}</p>}
+                {!sessionsLoading && !sessionsError && sessions.length === 0 && <p className={`text-[11px] ${subtleText}`}>No sign-ins recorded yet.</p>}
+                {sessions.map((s) => {
+                  const DeviceIcon = /iphone|android/i.test(s.device) ? Smartphone : Monitor;
                   return (
                     <div key={s.id} className={`flex items-center justify-between gap-2 rounded-lg px-3 py-2.5 ${darkMode ? "bg-slate-800/60" : "bg-slate-50"}`}>
                       <div className="flex items-center gap-2.5 min-w-0">
@@ -1808,24 +1952,16 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
                           <span className={`flex items-center gap-1.5 text-[11.5px] font-semibold truncate ${cardText}`}>
                             {s.device} {s.current && <Badge tone="violet" darkMode={darkMode}>This device</Badge>}
                           </span>
-                          <span className={`block text-[10.5px] truncate ${subtleText}`}>{s.location} · {s.lastActive}</span>
+                          <span className={`block text-[10.5px] truncate ${subtleText}`}>
+                            {s.ip || "IP unknown"} · signed in {formatDateTime(s.signed_in_at)} · {s.method}
+                          </span>
                         </span>
                       </div>
-                      {!s.current && (
-                        <button
-                          onClick={() => {
-                            setSecurity((sec) => ({ ...sec, sessions: sec.sessions.filter((x) => x.id !== s.id) }));
-                            showToast("Session revoked");
-                          }}
-                          className={`text-[11px] font-semibold shrink-0 ${darkMode ? "text-rose-400 hover:text-rose-300" : "text-rose-500 hover:text-rose-600"}`}
-                        >
-                          Revoke
-                        </button>
-                      )}
                     </div>
                   );
                 })}
               </div>
+              <p className={`mt-2 text-[10px] ${subtleText}`}>All your devices share one sign-in, so they can be signed out together but not one by one.</p>
             </div>
           </>
         )}
@@ -1966,17 +2102,21 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
             <Info size={13} className="text-violet-500" /> System Information
           </h3>
           <div className="mt-3 space-y-2">
-            {[
-              ["System Version", "v2.4.1"],
-              ["Last Updated", "May 20, 2025"],
-              ["System Status", "All Systems Operational", "ok"],
-              ["Database", "Connected", "ok"],
-              ["Backup Status", "Last backup May 24, 2025"],
-            ].map(([label, value, kind]) => (
-              <div key={label} className="flex items-center justify-between">
+            {(sysInfo
+              ? [
+                  ["System Version", sysInfo.version || "Not reported"],
+                  ["Last Restart", sysInfo.started_at ? formatDateTime(sysInfo.started_at) : "—"],
+                  ["System Status", sysInfo.status === "operational" ? "All Systems Operational" : "Degraded", sysInfo.status === "operational" ? "ok" : "bad"],
+                  ["Database", sysInfo.database.ok ? `Connected${sysInfo.database.latency_ms != null ? ` · ${sysInfo.database.latency_ms} ms` : ""}` : "Unavailable", sysInfo.database.ok ? "ok" : "bad"],
+                  ["Push", sysInfo.push_configured ? "Configured" : "Not configured", sysInfo.push_configured ? "ok" : "bad"],
+                  ["Backups", "Handled by your database host"],
+                ]
+              : [["Status", sysInfoError || "Checking...", sysInfoError ? "bad" : undefined]]
+            ).map(([label, value, kind]) => (
+              <div key={label} className="flex items-center justify-between gap-2">
                 <span className={`text-[11px] ${mutedText}`}>{label}</span>
-                <span className={`text-[10.5px] font-medium flex items-center gap-1 ${kind === "ok" ? "text-emerald-600" : cardText}`}>
-                  {kind === "ok" && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />}
+                <span className={`text-[10.5px] font-medium flex items-center gap-1 text-right ${kind === "ok" ? "text-emerald-600" : kind === "bad" ? "text-rose-500" : cardText}`}>
+                  {kind && <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${kind === "ok" ? "bg-emerald-500" : "bg-rose-500"}`} />}
                   {value}
                 </span>
               </div>
@@ -2001,9 +2141,9 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
               onClick={() =>
                 setConfirm({
                   title: "Reset system settings",
-                  message: "This resets every setting in this panel — company info, users, categories, and more — back to their defaults. This cannot be undone.",
+                  message: "This puts the saved preferences — Projects, Tasks, Income, Expenses, Sales, display options and your notification choices — back to their defaults. Your company name and details, logo, billing, users, departments and all your data stay exactly as they are.",
                   danger: true,
-                  confirmLabel: "Reset Everything",
+                  confirmLabel: "Reset Settings",
                   onConfirm: resetEverything,
                 })
               }
@@ -2014,16 +2154,31 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
           </div>
           <div className="mt-4">
             <p className="text-[11.5px] font-semibold text-rose-600">Delete Account</p>
-            <p className="text-[10.5px] text-rose-400 mt-0.5">This action cannot be undone. All data will be permanently deleted.</p>
-            <button
-              onClick={() => {
-                setDeleteConfirmText("");
-                setModal({ type: "deleteAccount" });
-              }}
-              className="mt-2 w-full text-[11px] font-semibold rounded-lg py-2 bg-rose-600 text-white hover:bg-rose-700"
-            >
-              Delete Account
-            </button>
+            <p className="text-[10.5px] text-rose-400 mt-0.5">
+              {deletion.requested
+                ? `Deletion requested ${formatDateTime(deletion.requested_at)}. Nothing has been deleted — your other admins were told.`
+                : "Ask to delete the company account. This only records a request; nothing is deleted automatically."}
+            </p>
+            {deletion.requested ? (
+              <button
+                onClick={withdrawDeletionRequest}
+                className="mt-2 w-full text-[11px] font-semibold rounded-lg py-2 border border-rose-200 text-rose-600 bg-white hover:bg-rose-50"
+              >
+                Cancel deletion request
+              </button>
+            ) : (
+              <button
+                onClick={() => {
+                  setDeleteConfirmText("");
+                  setDeletePassword("");
+                  setDeleteError("");
+                  setModal({ type: "deleteAccount" });
+                }}
+                className="mt-2 w-full text-[11px] font-semibold rounded-lg py-2 bg-rose-600 text-white hover:bg-rose-700"
+              >
+                Request Account Deletion
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -2085,24 +2240,89 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
         />
       </Modal>
 
-      {/* Enable 2FA */}
-      <Modal open={modal?.type === "enable2fa"} onClose={closeModal} title="Enable Two-Factor Authentication" darkMode={darkMode} widthClass="max-w-sm">
-        <div className="flex flex-col items-center text-center gap-3">
-          <div className={`w-32 h-32 rounded-lg grid grid-cols-5 grid-rows-5 gap-1 p-2 ${darkMode ? "bg-slate-800" : "bg-slate-100"}`}>
-            {Array.from({ length: 25 }).map((_, i) => (
-              <span key={i} className={`rounded-sm ${(i * 7) % 3 === 0 ? "bg-slate-900 dark:bg-white" : ""}`} />
-            ))}
+      {/* Enable 2FA — real authenticator setup */}
+      <Modal open={modal?.type === "enable2fa"} onClose={closeModal} title={twoFa.backupCodes ? "Save your backup codes" : "Enable Two-Factor Authentication"} darkMode={darkMode} widthClass="max-w-sm">
+        {twoFa.backupCodes ? (
+          <div className="space-y-3">
+            <p className={`text-[11.5px] ${mutedText}`}>
+              Two-factor is on. Keep these one-time codes somewhere safe — each works once if you lose your phone. They are shown only now.
+            </p>
+            <div className={`grid grid-cols-2 gap-1.5 rounded-lg p-3 font-mono text-[12px] ${darkMode ? "bg-slate-800 text-slate-100" : "bg-slate-100 text-slate-800"}`}>
+              {twoFa.backupCodes.map((c) => (
+                <span key={c}>{c}</span>
+              ))}
+            </div>
+            <button
+              onClick={() => {
+                navigator.clipboard?.writeText(twoFa.backupCodes.join("\n"));
+                showToast("Backup codes copied");
+              }}
+              className={`w-full text-xs font-semibold rounded-lg py-2 border ${darkMode ? "border-slate-700 text-slate-300 hover:bg-slate-800" : "border-slate-200 text-slate-600 hover:bg-slate-50"}`}
+            >
+              Copy codes
+            </button>
+            <button
+              onClick={() => {
+                setTwoFa((t) => ({ ...t, backupCodes: null }));
+                closeModal();
+              }}
+              className="w-full bg-gradient-to-r from-violet-600 to-indigo-600 text-white rounded-lg py-2 text-xs font-semibold hover:opacity-90"
+            >
+              I've saved them
+            </button>
           </div>
-          <p className={`text-[11.5px] ${mutedText}`}>Scan this code with your authenticator app, then confirm below to finish setup.</p>
+        ) : (
+          <div className="flex flex-col items-center text-center gap-3">
+            {twoFa.setup ? (
+              <>
+                <img src={twoFa.setup.qr} alt="Authenticator QR code" className="w-40 h-40 rounded-lg bg-white p-1" />
+                <p className={`text-[11.5px] ${mutedText}`}>Scan this with your authenticator app, then type the 6-digit code it shows.</p>
+                <p className={`text-[10.5px] break-all ${subtleText}`}>
+                  Can't scan? Enter this key by hand: <span className="font-mono font-semibold">{twoFa.setup.secret}</span>
+                </p>
+                <input
+                  className={inputClass + " text-center tracking-[0.3em]"}
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  placeholder="123456"
+                  value={twoFa.code}
+                  onChange={(e) => setTwoFa((t) => ({ ...t, code: e.target.value.replace(/\D/g, "").slice(0, 6) }))}
+                />
+              </>
+            ) : (
+              <p className={`text-[11.5px] ${twoFa.error ? "text-rose-500" : mutedText}`}>{twoFa.error || "Preparing your setup..."}</p>
+            )}
+            {twoFa.setup && twoFa.error && <p className="text-[11px] text-rose-500">{twoFa.error}</p>}
+            {twoFa.setup && (
+              <button
+                disabled={twoFa.busy || twoFa.code.length !== 6}
+                onClick={confirmTwoFactor}
+                className="w-full bg-gradient-to-r from-violet-600 to-indigo-600 text-white rounded-lg py-2 text-xs font-semibold hover:opacity-90 disabled:opacity-60"
+              >
+                {twoFa.busy ? "Checking..." : "Verify & Enable"}
+              </button>
+            )}
+          </div>
+        )}
+      </Modal>
+
+      {/* Turn 2FA off / new backup codes — both need password + a current code */}
+      <Modal open={modal?.type === "disable2fa" || modal?.type === "backupCodes"} onClose={closeModal} title={modal?.type === "backupCodes" ? "New backup codes" : "Turn off Two-Factor Authentication"} darkMode={darkMode} widthClass="max-w-sm">
+        <div className="space-y-3">
+          <p className={`text-[11.5px] ${mutedText}`}>
+            {modal?.type === "backupCodes"
+              ? "Confirm it's you. This replaces your old backup codes with 8 new ones."
+              : "Confirm it's you. Your account will go back to password-only sign-in."}
+          </p>
+          <input type="password" className={inputClass} placeholder="Account password" value={twoFaOff.password} onChange={(e) => setTwoFaOff((t) => ({ ...t, password: e.target.value }))} />
+          <input className={inputClass} inputMode="numeric" autoComplete="one-time-code" placeholder="Code from your authenticator app" value={twoFaOff.code} onChange={(e) => setTwoFaOff((t) => ({ ...t, code: e.target.value.slice(0, 12) }))} />
+          {twoFaOff.error && <p className="text-[11px] text-rose-500">{twoFaOff.error}</p>}
           <button
-            onClick={() => {
-              setSecurity((s) => ({ ...s, twoFactor: true }));
-              closeModal();
-              showToast("Two-factor authentication enabled");
-            }}
-            className="w-full bg-gradient-to-r from-violet-600 to-indigo-600 text-white rounded-lg py-2 text-xs font-semibold hover:opacity-90"
+            disabled={twoFaOff.busy || !twoFaOff.password || !twoFaOff.code}
+            onClick={modal?.type === "backupCodes" ? newBackupCodes : confirmDisableTwoFactor}
+            className={`w-full text-xs font-semibold rounded-lg py-2 text-white disabled:opacity-60 ${modal?.type === "backupCodes" ? "bg-gradient-to-r from-violet-600 to-indigo-600" : "bg-rose-600 hover:bg-rose-700"}`}
           >
-            I've scanned it — Enable
+            {twoFaOff.busy ? "Working..." : modal?.type === "backupCodes" ? "Create new codes" : "Turn off"}
           </button>
         </div>
       </Modal>
@@ -2231,45 +2451,46 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
             </button>
           ))}
           <button
-            onClick={() => showToast("Logs refreshed")}
+            onClick={() => loadLogs(logFilter)}
             className={`ml-auto w-7 h-7 rounded-md flex items-center justify-center ${darkMode ? "text-slate-400 hover:bg-slate-800" : "text-slate-500 hover:bg-slate-100"}`}
+            title="Refresh"
           >
-            <RefreshCw size={13} />
+            <RefreshCw size={13} className={logsLoading ? "animate-spin" : ""} />
           </button>
         </div>
         <div className="space-y-1.5 max-h-72 overflow-y-auto">
-          {filteredLogs.map((log) => (
+          {logsError && <p className="text-[11px] text-rose-500 py-2">{logsError}</p>}
+          {logs.map((log) => (
             <div key={log.id} className={`flex items-start gap-2.5 rounded-lg px-3 py-2 ${darkMode ? "bg-slate-800/60" : "bg-slate-50"}`}>
               <span className={`w-1.5 h-1.5 rounded-full mt-1.5 shrink-0 ${log.level === "error" ? "bg-rose-500" : log.level === "warning" ? "bg-amber-500" : "bg-emerald-500"}`} />
               <span className="min-w-0">
                 <span className={`block text-[11.5px] font-medium ${cardText}`}>{log.message}</span>
-                <span className={`block text-[10px] ${subtleText}`}>{log.time}</span>
+                <span className={`block text-[10px] ${subtleText}`}>{formatDateTime(log.time)} · {log.actor}{log.module ? ` · ${log.module}` : ""}</span>
               </span>
             </div>
           ))}
-          {filteredLogs.length === 0 && <p className={`text-[11px] italic text-center py-6 ${subtleText}`}>No {logFilter} logs.</p>}
+          {!logsLoading && !logsError && logs.length === 0 && <p className={`text-[11px] italic text-center py-6 ${subtleText}`}>No {logFilter === "all" ? "" : logFilter + " "}logs yet.</p>}
         </div>
       </Modal>
 
-      {/* Delete account */}
-      <Modal open={modal?.type === "deleteAccount"} onClose={closeModal} title="Delete Account" darkMode={darkMode} widthClass="max-w-sm">
+      {/* Delete account — records a request only */}
+      <Modal open={modal?.type === "deleteAccount"} onClose={closeModal} title="Request Account Deletion" darkMode={darkMode} widthClass="max-w-sm">
         <p className={`text-xs leading-relaxed ${mutedText}`}>
-          This permanently deletes your account and all company data. This action cannot be undone. Type <span className="font-bold text-rose-500">DELETE</span> to confirm.
+          This records a request to delete the company account and tells your other admins. <b>Nothing is deleted</b> — removing company data is a separate, deliberate step. You can cancel the request any time. Type <span className="font-bold text-rose-500">DELETE</span> and your password to continue.
         </p>
         <input className={inputClass + " mt-3"} value={deleteConfirmText} onChange={(e) => setDeleteConfirmText(e.target.value)} placeholder="Type DELETE" />
+        <input type="password" className={inputClass + " mt-2"} value={deletePassword} onChange={(e) => setDeletePassword(e.target.value)} placeholder="Your password" />
+        {deleteError && <p className="text-[11px] text-rose-500 mt-2">{deleteError}</p>}
         <div className="flex items-center gap-2 mt-4">
           <button onClick={closeModal} className={`flex-1 text-xs font-semibold rounded-lg py-2 border ${darkMode ? "border-slate-700 text-slate-300 hover:bg-slate-800" : "border-slate-200 text-slate-600 hover:bg-slate-50"}`}>
             Cancel
           </button>
           <button
-            disabled={deleteConfirmText !== "DELETE"}
-            onClick={() => {
-              closeModal();
-              setAccountDeleted(true);
-            }}
-            className={`flex-1 text-xs font-semibold rounded-lg py-2 text-white ${deleteConfirmText === "DELETE" ? "bg-rose-600 hover:bg-rose-700" : "bg-rose-300 cursor-not-allowed"}`}
+            disabled={deleteConfirmText !== "DELETE" || !deletePassword || deleteBusy}
+            onClick={submitDeletionRequest}
+            className={`flex-1 text-xs font-semibold rounded-lg py-2 text-white ${deleteConfirmText === "DELETE" && deletePassword ? "bg-rose-600 hover:bg-rose-700" : "bg-rose-300 cursor-not-allowed"}`}
           >
-            Delete Permanently
+            {deleteBusy ? "Sending..." : "Send Request"}
           </button>
         </div>
       </Modal>
@@ -2293,24 +2514,6 @@ export default function SettingsPage({ darkMode, setDarkMode, avatar, onAvatarCh
         </div>
       )}
 
-      {/* Account deleted overlay */}
-      {accountDeleted && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 p-4">
-          <div className={`w-full max-w-sm rounded-xl p-6 text-center shadow-xl ${darkMode ? "bg-slate-900 border border-slate-800" : "bg-white"}`}>
-            <span className="w-12 h-12 rounded-full bg-rose-50 text-rose-500 flex items-center justify-center mx-auto mb-3">
-              <AlertTriangle size={20} />
-            </span>
-            <h3 className={`text-sm font-bold ${headingText}`}>Account Scheduled for Deletion</h3>
-            <p className={`text-xs mt-2 ${mutedText}`}>Your account and data will be permanently removed in 14 days. You can cancel this anytime before then.</p>
-            <button
-              onClick={() => setAccountDeleted(false)}
-              className="mt-4 w-full bg-gradient-to-r from-violet-600 to-indigo-600 text-white rounded-lg py-2 text-xs font-semibold hover:opacity-90"
-            >
-              Undo — Keep My Account
-            </button>
-          </div>
-        </div>
-      )}
     </div>
     </CompactModeContext.Provider>
   );
