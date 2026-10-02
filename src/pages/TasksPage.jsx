@@ -634,6 +634,10 @@ async function notifyAssigneesOfTaskBatch(names, tasks, approvedUsers, setConver
 ---------------------------------------------------------------------- */
 async function notifyAdminOfTaskCompletion(task, link, newAttachments, currentUser, approvedUsers, setConversations) {
   if (!currentUser?.id) return;
+  // A module task: the server sends the admin ONE message for the completion
+  // and for every new file/link (projects/handoff.py). Sending the same thing
+  // from here too is what made the admin get everything twice.
+  if (task?.moduleTaskKey || task?.moduleBackendId) return;
 
   const idByName = new Map(
     (approvedUsers || []).filter((u) => u.name).map((u) => [u.name.trim().toLowerCase(), u.id])
@@ -3603,6 +3607,21 @@ export default function TasksPage({ darkMode = false, conversations = [], setCon
     showToast("Task reopened. You can attach files again and mark it completed.", "success");
   };
 
+  // Admin: forward this module's new files/link to the next member.
+  const approveTaskHandoff = (id) => {
+    const targetTask = tasks.find((t) => t.id === id);
+    if (!targetTask) return;
+    tasksApiFetch(`/tasks/${id}/approve-handoff/`, {
+      method: "POST",
+      body: JSON.stringify({ moduleId: resolveTaskModuleBackendId(targetTask) }),
+    })
+      .then((res) => {
+        setTasks((list) => list.map((t) => (t.id === id ? { ...t, handoffStatus: "sent", handoffNext: "" } : t)));
+        showToast(res?.message || "Sent to the next member.", "success");
+      })
+      .catch((err) => showToast(err.message || "Could not send to the next member.", "error"));
+  };
+
   // Lets a screenshot/video/link be added to a task at any time — not
   // just at the moment it's marked complete — and, for a module task,
   // syncs straight into the client's project checklist so it shows up
@@ -4408,6 +4427,7 @@ export default function TasksPage({ darkMode = false, conversations = [], setCon
               onToggleSubtask={(subId) => toggleSubtask(selectedTask.id, subId)}
               onMarkCompleted={() => setCompletingTaskId(selectedTask.id)}
               onReopen={() => reopenTask(selectedTask.id)}
+              onApproveHandoff={user?.role === "admin" ? () => approveTaskHandoff(selectedTask.id) : undefined}
               onDelete={() => deleteTask(selectedTask.id)}
               onEdit={() => setEditingTaskId(selectedTask.id)}
               onSaveRequirements={(text) => updateTask(selectedTask.id, { requirements: text })}
@@ -5261,6 +5281,7 @@ function TaskDetails({
   onToggleSubtask,
   onMarkCompleted,
   onReopen,
+  onApproveHandoff,
   onDelete,
   onEdit,
   onSaveRequirements,
@@ -5537,6 +5558,18 @@ function TaskDetails({
             )
           ) : (
             <p className="mt-2 text-xs opacity-80">No work link was attached.</p>
+          )}
+          {onApproveHandoff && task.handoffStatus === "pending" && (
+            <button
+              type="button"
+              onClick={onApproveHandoff}
+              className="mt-3 w-full flex items-center justify-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold py-2 rounded-full transition"
+            >
+              <Check className="w-3.5 h-3.5" /> Approve &amp; send{task.handoffNext ? ` to ${task.handoffNext}` : " to next member"}
+            </button>
+          )}
+          {!onApproveHandoff && task.handoffStatus === "pending" && (
+            <p className="mt-2 text-[11px] opacity-80">⏳ Waiting for admin approval before it goes to the next member.</p>
           )}
           {onReopen && (
             <button

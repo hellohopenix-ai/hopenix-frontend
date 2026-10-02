@@ -983,18 +983,12 @@ async function sendProjectNotificationsToBackend({ project, combinedTeam, approv
         }).catch(() => {});
       }
 
-      // 4. FIX (module attachments never reached Messages): files added
-      // to individual modules on the Add Project form used to be saved
-      // only in this browser's IndexedDB and never forwarded anywhere —
-      // now every module file created at project-creation time is sent
-      // to every assigned member + manager too, same as the brief/ZIP.
-      for (const mf of moduleFiles || []) {
-        await messagesApi.sendMessage({
-          recipientId: u.id,
-          text: `📎 Module file "${mf.fileName}" attached to the "${mf.moduleName}" module for "${project.name}"`,
-          attachment: mf.file,
-        }).catch(() => {});
-      }
+      // 4. Module files are NOT broadcast to the team any more. They used
+      // to be sent to every manager + member (so the same file landed in
+      // everyone's chat several times, and employees received each other's
+      // work). The server now sends each new module file/link to the ADMIN
+      // once, and only an admin's "Approve & send" forwards it to the next
+      // member (see projects/handoff.py).
     }
   } catch (err) {
     console.error("Failed sending backend project notifications:", err);
@@ -2011,27 +2005,8 @@ export default function ProjectsPage({ darkMode = false, conversations, setConve
           return { ...p, modules };
         })
       );
-      // Whoever isn't an admin attaching a file gets it forwarded up to
-      // the admin automatically — see notifyAdminOfModuleAttachment.
-      const msgFile = await buildFileMessageEntry(localFileEntry);
-      notifyAdminOfModuleAttachment(setConversations, approvedUsers, CURRENT_USER, {
-        text: `📎 ${CURRENT_USER} attached "${file.name}" to the "${moduleName}" module${projectName ? ` on "${projectName}"` : ""}.`,
-        file: msgFile,
-      });
-
-      // Also send real backend message to all assigned project members & manager
-      const targetProj = projects.find((p) => p.id === projectId);
-      if (targetProj) {
-        const teamNames = Array.from(new Set([...(targetProj.manager && targetProj.manager !== "Unassigned" ? [targetProj.manager] : []), ...(targetProj.team || [])]));
-        const memberUsers = teamNames.map((name) => (approvedUsers || []).find((u) => u.name === name)).filter((u) => u && u.id);
-        for (const u of memberUsers) {
-          messagesApi.sendMessage({
-            recipientId: u.id,
-            text: `📎 ${CURRENT_USER} attached file "${file.name}" to module "${moduleName}" on project "${projectName || targetProj.name}"`,
-            attachment: file,
-          }).catch(() => {});
-        }
-      }
+      // The admin is told by the server (once) and the next member gets it
+      // only after the admin approves - nothing is broadcast from here.
 
       showToast(`${file.name} uploaded to the module.`, "success");
     } catch (e) {
@@ -2093,11 +2068,6 @@ export default function ProjectsPage({ darkMode = false, conversations, setConve
         return { ...p, modules };
       })
     );
-    if (trimmed && trimmed !== prevUrl.trim()) {
-      notifyAdminOfModuleAttachment(setConversations, approvedUsers, CURRENT_USER, {
-        text: `🔗 ${CURRENT_USER} attached a link to the "${moduleName}" module${projectName ? ` on "${projectName}"` : ""}: ${trimmed}`,
-      });
-    }
   };
 
   // Admin approval: sends a completed module's link/files (already in the
@@ -2527,52 +2497,10 @@ export default function ProjectsPage({ darkMode = false, conversations, setConve
     // never re-notify people who were already on it.
     const newlyAdded = combinedTeam.filter((n) => !previous?.team?.includes(n));
 
-    // Any module link or file newly attached in this edit gets forwarded
-    // up to the admin too, same as a live upload from the sidebar/Full
-    // Details panel — see notifyAdminOfModuleAttachment.
+    // New module files/links from this edit are announced to the admin by the
+    // server (once each); the next member only receives them after an admin
+    // presses "Approve & send". Nothing is sent to the team from here.
     const projectLabel = previous?.name || data.name || "a project";
-    (data.modules || []).forEach((m) => {
-      const prevModule = (previous?.modules || []).find((pm) => pm.id === m.id);
-      const prevUrl = (prevModule?.url || "").trim();
-      const nextUrl = (m.url || "").trim();
-      if (nextUrl && nextUrl !== prevUrl) {
-        notifyAdminOfModuleAttachment(setConversations, approvedUsers, CURRENT_USER, {
-          text: `🔗 ${CURRENT_USER} attached a link to the "${m.name}" module on "${projectLabel}": ${nextUrl}`,
-        });
-      }
-      const prevFileIds = new Set((prevModule?.files || []).map((f) => f.id));
-      (m.files || []).forEach((f) => {
-        if (prevFileIds.has(f.id)) return;
-        buildFileMessageEntry(f).then((msgFile) => {
-          notifyAdminOfModuleAttachment(setConversations, approvedUsers, CURRENT_USER, {
-            text: `📎 ${CURRENT_USER} attached "${f.fileName}" to the "${m.name}" module on "${projectLabel}".`,
-            file: msgFile,
-          });
-        });
-      });
-    });
-
-    // FIX (edit-time module files never reached Messages): previously
-    // only the admin got a local heads-up (above) — now every assigned
-    // manager + team member also gets a real backend message with the
-    // file, same as brief/ZIP/module files already do on project
-    // creation. Fire-and-forget, same as sendProjectNotificationsToBackend.
-    if (moduleFilesForMessages.length > 0) {
-      const memberUsers = combinedTeam
-        .map((n) => (approvedUsers || []).find((u) => u.name === n))
-        .filter((u) => u && u.id);
-      (async () => {
-        for (const u of memberUsers) {
-          for (const mf of moduleFilesForMessages) {
-            await messagesApi.sendMessage({
-              recipientId: u.id,
-              text: `📎 Module file "${mf.fileName}" attached to the "${mf.moduleName}" module for "${projectLabel}"`,
-              attachment: mf.file,
-            }).catch(() => {});
-          }
-        }
-      })();
-    }
 
     // Snapshot of the project as it will look right after this edit, used
     // to keep each manager↔member 1:1 thread (details message) in sync —
