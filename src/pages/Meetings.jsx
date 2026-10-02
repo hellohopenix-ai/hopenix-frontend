@@ -51,6 +51,7 @@ function isMeetingToday(m) {
 function isMeetingMissed(m) {
   if (!m.rawDate || !m.rawTime) return false;
   if (m.status === "Cancelled" || m.status === "Declined" || m.status === "Completed") return false;
+  if ((m.attendedBy || []).length > 0) return false; // kisi ne join kar liya — missed nahi
   const start = new Date(`${m.rawDate}T${m.rawTime}:00`);
   if (Number.isNaN(start.getTime())) return false;
   const end = new Date(start.getTime() + 60 * 60000);
@@ -306,7 +307,7 @@ function statusBadge(status, darkMode) {
     Upcoming: "bg-emerald-500/15 text-emerald-400",
     Confirmed: "bg-indigo-500/15 text-indigo-300",
     "In Progress": "bg-sky-500/15 text-sky-300",
-    Completed: "bg-slate-700/50 text-slate-300",
+    Completed: "bg-emerald-500/20 text-emerald-300",
     Cancelled: "bg-rose-500/15 text-rose-400",
     Declined: "bg-rose-500/15 text-rose-400",
   };
@@ -314,7 +315,7 @@ function statusBadge(status, darkMode) {
     Upcoming: "bg-emerald-50 text-emerald-600",
     Confirmed: "bg-indigo-50 text-indigo-600",
     "In Progress": "bg-sky-50 text-sky-600",
-    Completed: "bg-slate-100 text-slate-600",
+    Completed: "bg-emerald-100 text-emerald-700",
     Cancelled: "bg-rose-50 text-rose-600",
     Declined: "bg-rose-50 text-rose-600",
   };
@@ -492,20 +493,40 @@ function WhatsAppShareButton({ meeting, darkMode = false, className = "" }) {
   );
 }
 
-function MeetingCard({ m, onOpen, onDecline, onReschedule, showDecline = true, darkMode = false }) {
+function MeetingCard({ m, onOpen, onJoin, user, onDecline, onReschedule, showDecline = true, darkMode = false }) {
   const t = useTheme(darkMode);
   const declined = m.status === "Declined";
   const cancelled = m.status === "Cancelled";
+  const completed = m.status === "Completed";
+  const iAttended = !!user?.name && (m.attendedBy || []).includes(user.name);
   const missed = isMeetingMissed(m);
-  const today = !missed && isMeetingToday(m);
-  const highlightCls = missed
+  const today = !missed && !completed && isMeetingToday(m);
+  const handleJoinClick = () => {
+    if (m.meetLink && !declined && !cancelled) {
+      window.open(m.meetLink, "_blank", "noopener,noreferrer");
+      onJoin && onJoin(m.id);
+    } else {
+      onOpen(m);
+    }
+  };
+  const highlightCls = completed
+    ? darkMode ? "bg-emerald-500/10 border border-emerald-500/50" : "bg-emerald-50 border border-emerald-300"
+    : missed
     ? darkMode ? "bg-rose-500/10 border border-rose-500/50" : "bg-rose-50 border border-rose-300"
     : today
     ? darkMode ? "bg-sky-500/10 border border-sky-500/50" : "bg-sky-50 border border-sky-300"
     : t.card;
   return (
     <div className={`rounded-xl p-4 shadow-sm flex flex-col gap-3 ${highlightCls}`}>
-      {missed ? (
+      {completed ? (
+        <div className={`-mt-1 flex items-center gap-1 text-[11px] font-semibold ${darkMode ? "text-emerald-300" : "text-emerald-600"}`}>
+          <CheckCircle2 size={13} /> Meeting attended successfully
+        </div>
+      ) : iAttended ? (
+        <div className={`-mt-1 flex items-center gap-1 text-[11px] font-semibold ${darkMode ? "text-emerald-300" : "text-emerald-600"}`}>
+          <CheckCircle2 size={13} /> You attended — waiting for the other participant
+        </div>
+      ) : missed ? (
         <div className={`-mt-1 text-[11px] font-semibold ${darkMode ? "text-rose-300" : "text-rose-600"}`}>
           Missed — this meeting's time has passed
         </div>
@@ -541,13 +562,13 @@ function MeetingCard({ m, onOpen, onDecline, onReschedule, showDecline = true, d
           )}
         </div>
         <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${statusBadge(m.status, darkMode)}`}>
-          ● {m.status}
+          {completed ? "✓ Completed" : `● ${m.status}`}
         </span>
       </div>
       <div className={`flex items-center justify-between pt-2 border-t text-[12px] ${t.border}`}>
         <div className="flex items-center gap-2">
           <button
-            onClick={() => onOpen(m)}
+            onClick={handleJoinClick}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-medium bg-gradient-to-r from-violet-600 to-indigo-600 text-white hover:opacity-90"
           >
             <Video size={13} /> Join Meeting
@@ -1425,7 +1446,7 @@ function AdminMeetingsView({ darkMode = false, user = { name: "You", role: "admi
         setMeetings((prev) => prev.map((x) => (x.id === m.id ? m : x)));
         setActiveMeeting((cur) => (cur && cur.id === m.id ? m : cur));
       })
-      .catch(() => {});
+      .catch((err) => alert("Attendance record nahi hui: " + err.message));
   };
   const handleSetLink = (id, meetLink) => {
     setMeetingLink(id, meetLink)
@@ -1525,7 +1546,7 @@ function AdminMeetingsView({ darkMode = false, user = { name: "You", role: "admi
             </div>
             <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {meetings.map((m) => (
-                <MeetingCard key={m.id} m={m} onOpen={handleOpenMeeting} onDecline={handleDecline} onReschedule={openReschedule} darkMode={darkMode} />
+                <MeetingCard key={m.id} m={m} onOpen={handleOpenMeeting} onJoin={handleJoin} user={user} onDecline={handleDecline} onReschedule={openReschedule} darkMode={darkMode} />
               ))}
               <button
                 onClick={() => setScheduleOpen(true)}
@@ -1685,7 +1706,7 @@ export function UserMeetings({ user = { name: "You", role: "Client" }, darkMode 
         setMeetings((prev) => prev.map((x) => (x.id === m.id ? m : x)));
         setActiveMeeting((cur) => (cur && cur.id === m.id ? m : cur));
       })
-      .catch(() => {});
+      .catch((err) => alert("Attendance record nahi hui: " + err.message));
   };
   const handleRequestReschedule = (payload) => {
     submitRescheduleRequest(payload)
@@ -1733,7 +1754,7 @@ export function UserMeetings({ user = { name: "You", role: "Client" }, darkMode 
             ) : (
               <div className="grid sm:grid-cols-2 gap-4">
                 {myMeetings.map((m) => (
-                  <MeetingCard key={m.id} m={m} onOpen={handleOpenMeeting} onReschedule={openReschedule} showDecline={false} darkMode={darkMode} />
+                  <MeetingCard key={m.id} m={m} onOpen={handleOpenMeeting} onJoin={handleJoin} user={user} onReschedule={openReschedule} showDecline={false} darkMode={darkMode} />
                 ))}
               </div>
             )}
