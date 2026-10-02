@@ -44,7 +44,7 @@ function formatTimeRangePretty(rawTime, durationMins = 60) {
 
 /** Meeting abhi "aaj" ke slot mein hai aur declined/cancelled nahi hai. */
 function isMeetingToday(m) {
-  return m.rawDate === isoDateOffset(0) && m.status !== "Cancelled" && m.status !== "Declined";
+  return m.rawDate === isoDateOffset(0) && m.status !== "Cancelled" && m.status !== "Declined" && m.status !== "Completed";
 }
 /** Meeting ka poora slot (start + default 60min) guzar chuka hai, aur wo abhi tak
  *  completed/cancelled/declined mark nahi hui — matlab attend nahi ki gayi. */
@@ -168,6 +168,11 @@ function createMeeting({ title, type, project, rawDate, rawTime, participants = 
 }
 function updateMeetingStatus(id, status) {
   return apiFetch(`/api/meetings/meetings/${id}/set-status/`, { method: "POST", body: { status } }).then(enrichMeeting);
+}
+/** Participant ne "Join Meeting" dabaya — server attendance record karta hai;
+ *  dono participants join kar lein to meeting khud "Completed" ho jati hai. */
+function joinMeeting(id) {
+  return apiFetch(`/api/meetings/meetings/${id}/join/`, { method: "POST" }).then(enrichMeeting);
 }
 function setMeetingLink(id, meetLink) {
   return apiFetch(`/api/meetings/meetings/${id}/set-link/`, { method: "POST", body: { meetLink } }).then(enrichMeeting);
@@ -614,7 +619,7 @@ function RequestRow({ r, onApprove, onReject, error, darkMode = false }) {
   );
 }
 
-function MeetingDetailsModal({ meeting, onClose, isAdmin = false, onSetLink, onReschedule, onRequestReschedule, onCancelMeeting, onDeleteMeeting, checkConflict, initialReschedule = false, user, darkMode = false }) {
+function MeetingDetailsModal({ meeting, onClose, isAdmin = false, onSetLink, onJoin, onReschedule, onRequestReschedule, onCancelMeeting, onDeleteMeeting, checkConflict, initialReschedule = false, user, darkMode = false }) {
   const t = useTheme(darkMode);
   const [linkInput, setLinkInput] = useState("");
   const [saved, setSaved] = useState(false);
@@ -816,6 +821,7 @@ function MeetingDetailsModal({ meeting, onClose, isAdmin = false, onSetLink, onR
                 href={meeting.meetLink}
                 target="_blank"
                 rel="noreferrer"
+                onClick={() => onJoin && onJoin(meeting.id)}
                 className="flex-1 bg-gradient-to-r from-violet-600 to-indigo-600 hover:opacity-90 text-white text-[13px] font-medium py-2 rounded-lg flex items-center justify-center gap-1.5"
               >
                 <Video size={14} /> Join Meeting
@@ -1413,6 +1419,14 @@ function AdminMeetingsView({ darkMode = false, user = { name: "You", role: "admi
       .then((m) => setMeetings((prev) => prev.map((x) => (x.id === m.id ? m : x))))
       .catch((err) => alert(err.message));
   };
+  const handleJoin = (id) => {
+    joinMeeting(id)
+      .then((m) => {
+        setMeetings((prev) => prev.map((x) => (x.id === m.id ? m : x)));
+        setActiveMeeting((cur) => (cur && cur.id === m.id ? m : cur));
+      })
+      .catch(() => {});
+  };
   const handleSetLink = (id, meetLink) => {
     setMeetingLink(id, meetLink)
       .then((m) => setMeetings((prev) => prev.map((x) => (x.id === m.id ? m : x))))
@@ -1607,6 +1621,7 @@ function AdminMeetingsView({ darkMode = false, user = { name: "You", role: "admi
         onClose={() => { setActiveMeeting(null); setAutoReschedule(false); }}
         isAdmin
         onSetLink={handleSetLink}
+        onJoin={handleJoin}
         onReschedule={handleReschedule}
         onCancelMeeting={handleCancelMeeting}
         onDeleteMeeting={handleDeleteMeeting}
@@ -1664,6 +1679,14 @@ export function UserMeetings({ user = { name: "You", role: "Client" }, darkMode 
   // MeetingDetailsModal calls this fire-and-forget (it shows its own
   // "request sent" confirmation right away), so a failure surfaces via
   // alert() here rather than an inline field in the modal.
+  const handleJoin = (id) => {
+    joinMeeting(id)
+      .then((m) => {
+        setMeetings((prev) => prev.map((x) => (x.id === m.id ? m : x)));
+        setActiveMeeting((cur) => (cur && cur.id === m.id ? m : cur));
+      })
+      .catch(() => {});
+  };
   const handleRequestReschedule = (payload) => {
     submitRescheduleRequest(payload)
       .then((req) => setRescheduleRequests((prev) => [req, ...prev]))
@@ -1777,6 +1800,7 @@ export function UserMeetings({ user = { name: "You", role: "Client" }, darkMode 
         meeting={activeMeeting}
         onClose={() => { setActiveMeeting(null); setAutoReschedule(false); }}
         isAdmin={false}
+        onJoin={handleJoin}
         onRequestReschedule={handleRequestReschedule}
         checkConflict={checkConflict}
         initialReschedule={autoReschedule}
