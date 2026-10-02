@@ -97,4 +97,9 @@ export function deleteModuleFile(projectId, moduleId, fileId) {
   return apiFetch(`/${projectId}/modules/${moduleId}/files/${fileId}/`, { method: "DELETE" });
 }
 
+// Admin approval: forwards a completed module's link/files to the next member.
+export function approveModuleHandoff(projectId, moduleId) {
+  return apiFetch(`/${projectId}/modules/${moduleId}/approve-handoff/`, { method: "POST", body: JSON.stringify({}) });
+}
+
 export const PROJECTS_API_BASE_URL = API_BASE_URL;

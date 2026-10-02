@@ -3574,6 +3574,35 @@ export default function TasksPage({ darkMode = false, conversations = [], setCon
     showToast("Task marked as completed. Admin has been notified.", "success");
   };
 
+  // Un-tick: a completed task can be reopened and completed again later.
+  // Attachments are kept (and can still be added/deleted); the linked
+  // Module goes back to Pending on the server and on the Clients page.
+  const reopenTask = (id) => {
+    const targetTask = tasks.find((t) => t.id === id);
+    if (!targetTask || targetTask.status !== "Completed") return;
+    if (targetTask.locked) {
+      showToast("This module is locked until the client's request to start it is accepted.", "error");
+      return;
+    }
+    const reopened = {
+      ...targetTask,
+      status: "Pending",
+      progress: 0,
+      subtasks: (targetTask.subtasks || []).map((s) => ({ ...s, done: false })),
+    };
+    setTasks((list) => list.map((t) => (t.id === id ? reopened : t)));
+    syncModuleStatusToClientsStorage(reopened, { done: false });
+    tasksApiFetch(`/tasks/${id}/reopen/`, {
+      method: "POST",
+      body: JSON.stringify({ moduleId: resolveTaskModuleBackendId(targetTask) }),
+    }).catch((err) => {
+      console.error("Could not reopen the task on the backend:", err);
+      setTasks((list) => list.map((t) => (t.id === id ? targetTask : t)));
+      showToast(err.message || "Could not reopen the task. Please try again.", "error");
+    });
+    showToast("Task reopened. You can attach files again and mark it completed.", "success");
+  };
+
   // Lets a screenshot/video/link be added to a task at any time — not
   // just at the moment it's marked complete — and, for a module task,
   // syncs straight into the client's project checklist so it shows up
@@ -4378,6 +4407,7 @@ export default function TasksPage({ darkMode = false, conversations = [], setCon
               onClose={() => setSelectedTaskId(null)}
               onToggleSubtask={(subId) => toggleSubtask(selectedTask.id, subId)}
               onMarkCompleted={() => setCompletingTaskId(selectedTask.id)}
+              onReopen={() => reopenTask(selectedTask.id)}
               onDelete={() => deleteTask(selectedTask.id)}
               onEdit={() => setEditingTaskId(selectedTask.id)}
               onSaveRequirements={(text) => updateTask(selectedTask.id, { requirements: text })}
@@ -5230,6 +5260,7 @@ function TaskDetails({
   onClose,
   onToggleSubtask,
   onMarkCompleted,
+  onReopen,
   onDelete,
   onEdit,
   onSaveRequirements,
@@ -5506,6 +5537,15 @@ function TaskDetails({
             )
           ) : (
             <p className="mt-2 text-xs opacity-80">No work link was attached.</p>
+          )}
+          {onReopen && (
+            <button
+              type="button"
+              onClick={onReopen}
+              className="mt-3 w-full flex items-center justify-center gap-1.5 bg-white hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-xs font-semibold py-2 rounded-full transition"
+            >
+              Reopen task (remove tick)
+            </button>
           )}
         </div>
       )}

@@ -126,6 +126,9 @@ function backendModuleToFrontend(bm) {
     dueDate: bm.due_date || "",
     url: bm.url || "",
     price: Number(bm.price) || 0,
+    // "" | "pending" (waiting for admin approval) | "sent" — see projects/handoff.py
+    handoffStatus: bm.handoff_status || "",
+    handoffNext: bm.handoff_next_name || "",
     files: (bm.files || []).map((f) => ({
       id: f.id,
       fileName: f.original_name,
@@ -1213,7 +1216,7 @@ function ModulesProgress({ modules, status, darkMode, cardText, mutedText, subtl
   );
 }
 
-function ModuleRow({ module: m, project, isAdmin, currentUser, canManage, canUploadFile, darkMode, cardText, mutedText, subtleText, onToggleDone, onCycleStatus, onUploadFile, onDownloadFile, onSetUrl }) {
+function ModuleRow({ module: m, project, isAdmin, currentUser, canManage, canUploadFile, darkMode, cardText, mutedText, subtleText, onToggleDone, onCycleStatus, onUploadFile, onDownloadFile, onSetUrl, onApproveHandoff, onDeleteFile }) {
   const [expanded, setExpanded] = useState(false);
   // Local draft so typing doesn't fire a save on every keystroke — only
   // committed (via onSetUrl) on blur or Enter, and only when it actually
@@ -1258,6 +1261,24 @@ function ModuleRow({ module: m, project, isAdmin, currentUser, canManage, canUpl
           {status}
         </button>
       </div>
+
+      {status === "Completed" && m.handoffStatus === "pending" && isAdmin && (
+        <div className="mt-1.5 pl-[26px]">
+          <button
+            type="button"
+            onClick={() => onApproveHandoff?.()}
+            className="inline-flex items-center gap-1.5 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-semibold px-3 py-1 transition"
+          >
+            <Check className="w-3 h-3" /> Approve &amp; send{m.handoffNext ? ` to ${m.handoffNext}` : " to next member"}
+          </button>
+        </div>
+      )}
+      {status === "Completed" && m.handoffStatus === "pending" && !isAdmin && (
+        <p className={`mt-1.5 pl-[26px] text-[10.5px] ${subtleText}`}>⏳ Waiting for admin approval before it goes to the next member.</p>
+      )}
+      {status === "Completed" && m.handoffStatus === "sent" && (
+        <p className="mt-1.5 pl-[26px] text-[10.5px] text-emerald-600">✓ Sent to the next member.</p>
+      )}
 
       <div className="flex items-center gap-2 mt-1.5 pl-[26px] flex-wrap">
         {m.assignee && m.assignee !== "Unassigned" && (
@@ -1349,6 +1370,11 @@ function ModuleRow({ module: m, project, isAdmin, currentUser, canManage, canUpl
               ) : (
                 <Lock className={`w-3 h-3 ${subtleText}`} />
               )}
+              {canManage && canSeeFile(f) && onDeleteFile && (
+                <button type="button" onClick={() => onDeleteFile(f)} className="text-slate-400 hover:text-rose-500" aria-label="Delete file" title="Delete file">
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              )}
             </div>
           ))}
           {!hasExtra && !canManage && <p className={`text-[10.5px] ${subtleText}`}>No link or files added to this module yet.</p>}
@@ -1372,13 +1398,17 @@ function ModuleRow({ module: m, project, isAdmin, currentUser, canManage, canUpl
   );
 }
 
-function ModulesSection({ project, isAdmin, currentUser, darkMode, cardText, mutedText, subtleText, barsPlay, onToggleDone, onCycleStatus, onUploadFile, onDownloadFile, onSetUrl, maxHeight = "max-h-72" }) {
+function ModulesSection({ project, isAdmin, currentUser, darkMode, cardText, mutedText, subtleText, barsPlay, onToggleDone, onCycleStatus, onUploadFile, onDownloadFile, onSetUrl, onApproveHandoff, onDeleteFile, maxHeight = "max-h-72" }) {
   const modules = project.modules || [];
   // Who's allowed to move a module along (check it off / cycle its
   // status / attach a file or URL to it) — an admin, the project's
   // manager, or anyone actually on its team. Random viewers of the
   // project can't.
-  const canManage = isAdmin || project.manager === currentUser || (project.team || []).includes(currentUser);
+  const canManage =
+    isAdmin ||
+    project.manager === currentUser ||
+    (project.team || []).includes(currentUser) ||
+    modules.some((m) => m.assignee === currentUser); // a module assignee can always tick/attach on their own module
   const moduleTotal = modules.reduce((sum, m) => sum + (Number(m.price) || 0), 0);
 
   return (
@@ -1404,6 +1434,8 @@ function ModulesSection({ project, isAdmin, currentUser, darkMode, cardText, mut
               onUploadFile={(file) => onUploadFile(m.id, file)}
               onDownloadFile={onDownloadFile}
               onSetUrl={(url) => onSetUrl?.(m.id, url)}
+              onApproveHandoff={() => onApproveHandoff?.(m.id)}
+              onDeleteFile={onDeleteFile ? (f) => onDeleteFile(m.id, f) : undefined}
             />
           ))}
         </div>
@@ -2066,6 +2098,62 @@ export default function ProjectsPage({ darkMode = false, conversations, setConve
         text: `🔗 ${CURRENT_USER} attached a link to the "${moduleName}" module${projectName ? ` on "${projectName}"` : ""}: ${trimmed}`,
       });
     }
+  };
+
+  // Admin approval: sends a completed module's link/files (already in the
+  // admin's chat) on to the next member, with the "continue" note.
+  const approveModuleHandoff = async (projectId, moduleId) => {
+    try {
+      const updated = await projectsApi.approveModuleHandoff(projectId, moduleId);
+      setProjects((list) =>
+        list.map((p) =>
+          p.id !== projectId
+            ? p
+            : {
+                ...p,
+                modules: (p.modules || []).map((m) =>
+                  m.id === moduleId ? { ...m, handoffStatus: updated?.handoff_status || "sent", handoffNext: "" } : m
+                ),
+              }
+        )
+      );
+      showToast(updated?.message || "Sent to the next member.", "success");
+    } catch (err) {
+      showToast(err.message || "Could not send to the next member.", "error");
+    }
+  };
+
+  // Delete a file from a module at any time (also after it was completed).
+  // Backend files are deleted on the server (which also removes it from the
+  // module's tasks); a device-only file is just dropped locally.
+  const handleDeleteModuleFile = async (projectId, moduleId, file) => {
+    const isSavedModule = !(typeof moduleId === "string" && moduleId.startsWith("m-"));
+    if (isSavedModule && file.storedOnBackend) {
+      moduleSavesPendingRef.current += 1;
+      moduleMutationSeqRef.current += 1;
+      try {
+        await projectsApi.deleteModuleFile(projectId, moduleId, file.id);
+      } catch (err) {
+        showToast(err.message || "File could not be deleted.", "error");
+        return;
+      } finally {
+        moduleSavesPendingRef.current -= 1;
+        moduleMutationSeqRef.current += 1;
+      }
+    }
+    setProjects((list) =>
+      list.map((p) =>
+        p.id !== projectId
+          ? p
+          : {
+              ...p,
+              modules: (p.modules || []).map((m) =>
+                m.id === moduleId ? { ...m, files: (m.files || []).filter((x) => x.id !== file.id) } : m
+              ),
+            }
+      )
+    );
+    showToast(`${file.fileName || "File"} deleted.`, "success");
   };
 
   const removeProject = (id) => {
@@ -2763,6 +2851,8 @@ export default function ProjectsPage({ darkMode = false, conversations, setConve
         onUploadFile={(moduleId, file) => handleUploadModuleFile(selected.id, moduleId, file)}
         onDownloadFile={downloadModuleFile}
         onSetUrl={(moduleId, url) => handleSetModuleUrl(selected.id, moduleId, url)}
+        onApproveHandoff={(moduleId) => approveModuleHandoff(selected.id, moduleId)}
+        onDeleteFile={(moduleId, f) => handleDeleteModuleFile(selected.id, moduleId, f)}
       />
 
       <div className={`flex items-center justify-between mb-2`}>
@@ -3431,6 +3521,8 @@ export default function ProjectsPage({ darkMode = false, conversations, setConve
           onUploadModuleFile={(moduleId, file) => handleUploadModuleFile(fullDetailsProject.id, moduleId, file)}
           onDownloadModuleFile={downloadModuleFile}
           onSetModuleUrl={(moduleId, url) => handleSetModuleUrl(fullDetailsProject.id, moduleId, url)}
+          onApproveModuleHandoff={(moduleId) => approveModuleHandoff(fullDetailsProject.id, moduleId)}
+          onDeleteModuleFile={(moduleId, f) => handleDeleteModuleFile(fullDetailsProject.id, moduleId, f)}
           onUploadZip={(file) => handleUploadZip(fullDetailsProject.id, file)}
           onViewDailyReports={() => viewProjectDailyReports(fullDetailsProject)}
           onDeleteDailyReports={() => handleDeleteDailyReports(fullDetailsProject)}
@@ -3468,7 +3560,7 @@ export default function ProjectsPage({ darkMode = false, conversations, setConve
    FULL DETAILS MODAL
 ====================================================================== */
 
-function FullDetailsModal({ project, darkMode, card, cardText, mutedText, subtleText, isAdmin, currentUser, onClose, onEdit, onPreview, onDownload, onSetStatus, onToggleModuleDone, onCycleModuleStatus, onUploadModuleFile, onDownloadModuleFile, onSetModuleUrl, onUploadZip, onViewDailyReports, onDeleteDailyReports }) {
+function FullDetailsModal({ project, darkMode, card, cardText, mutedText, subtleText, isAdmin, currentUser, onClose, onEdit, onPreview, onDownload, onSetStatus, onToggleModuleDone, onCycleModuleStatus, onUploadModuleFile, onDownloadModuleFile, onSetModuleUrl, onApproveModuleHandoff, onDeleteModuleFile, onUploadZip, onViewDailyReports, onDeleteDailyReports }) {
   // Only an admin, the project's manager, or someone on its team can
   // upload the finished work — random viewers of a project shouldn't
   // be able to attach files to it.
@@ -3614,6 +3706,8 @@ function FullDetailsModal({ project, darkMode, card, cardText, mutedText, subtle
             onUploadFile={(moduleId, file) => onUploadModuleFile?.(moduleId, file)}
             onDownloadFile={(f) => onDownloadModuleFile?.(f)}
             onSetUrl={(moduleId, url) => onSetModuleUrl?.(moduleId, url)}
+            onApproveHandoff={(moduleId) => onApproveModuleHandoff?.(moduleId)}
+            onDeleteFile={(moduleId, f) => onDeleteModuleFile?.(moduleId, f)}
           />
 
           <div>
