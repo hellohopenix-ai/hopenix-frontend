@@ -1647,6 +1647,29 @@ export default function ProjectsPage({ darkMode = false, conversations, setConve
   // as everywhere else in the app.
   const [detailsOpen, setDetailsOpen] = useState(() => typeof window !== "undefined" ? window.innerWidth >= 1024 : true);
   const [openActionMenu, setOpenActionMenu] = useState(null);
+  // Screen position of the open row-actions (3-dot) menu. The menu is drawn in
+  // a portal on <body> with position:fixed, so the table's overflow container
+  // can no longer clip it ("pop up goes inside the div").
+  const [actionMenuPos, setActionMenuPos] = useState(null);
+  useEffect(() => {
+    if (openActionMenu == null) return undefined;
+    const close = () => setOpenActionMenu(null);
+    const onDown = (e) => {
+      if (e.target.closest?.("[data-action-menu]") || e.target.closest?.("[data-action-toggle]")) return;
+      close();
+    };
+    const onKey = (e) => e.key === "Escape" && close();
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    window.addEventListener("resize", close);
+    window.addEventListener("scroll", close, true); // capture: also inner scroll areas
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("resize", close);
+      window.removeEventListener("scroll", close, true);
+    };
+  }, [openActionMenu]);
   const [createOpen, setCreateOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
 
@@ -3231,14 +3254,33 @@ export default function ProjectsPage({ darkMode = false, conversations, setConve
                       <td className={`py-2.5 px-2 whitespace-nowrap ${mutedText}`}>{fmtDate(p.deadline)}</td>
                       <td className="py-2.5 pr-5 pl-2 text-right relative" onClick={(e) => e.stopPropagation()}>
                         <button
-                          onClick={() => setOpenActionMenu(openActionMenu === p.id ? null : p.id)}
+                          data-action-toggle
+                          onClick={(e) => {
+                            if (openActionMenu === p.id) {
+                              setOpenActionMenu(null);
+                              return;
+                            }
+                            const r = e.currentTarget.getBoundingClientRect();
+                            const MENU_H = 290; // tallest possible menu; flip upward if it won't fit below
+                            const openUp = window.innerHeight - r.bottom < MENU_H && r.top > MENU_H;
+                            setActionMenuPos(
+                              openUp
+                                ? { right: Math.max(8, window.innerWidth - r.right), bottom: window.innerHeight - r.top + 4 }
+                                : { right: Math.max(8, window.innerWidth - r.right), top: r.bottom + 4 }
+                            );
+                            setOpenActionMenu(p.id);
+                          }}
                           className={`w-8 h-8 inline-flex items-center justify-center rounded-lg ${mutedText} ${darkMode ? "hover:bg-slate-800" : "hover:bg-slate-100"}`}
                           aria-label="Row actions"
                         >
                           <MoreVertical className="w-4 h-4" />
                         </button>
-                        {openActionMenu === p.id && (
-                          <div className={`absolute right-5 top-10 z-20 w-44 rounded-xl shadow-lg py-1 text-left ${card}`}>
+                        {openActionMenu === p.id && actionMenuPos && createPortal(
+                          <div
+                            data-action-menu
+                            style={{ position: "fixed", ...actionMenuPos }}
+                            className={`z-[1000] w-44 rounded-xl shadow-lg py-1 text-left ${card}`}
+                          >
                             <button onClick={() => { setFullDetailsId(p.id); setOpenActionMenu(null); }} className={`w-full flex items-center gap-2 text-left px-3 py-2 text-sm ${mutedText} ${rowHover}`}>
                               <Eye className="w-3.5 h-3.5" /> View details
                             </button>
@@ -3271,7 +3313,8 @@ export default function ProjectsPage({ darkMode = false, conversations, setConve
                                 <Trash2 className="w-3.5 h-3.5" /> Delete project
                               </button>
                             )}
-                          </div>
+                          </div>,
+                          document.body
                         )}
                       </td>
                     </tr>
