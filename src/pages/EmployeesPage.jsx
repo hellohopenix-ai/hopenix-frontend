@@ -1069,7 +1069,7 @@ function MyProfileSection({ theme, employee, onRequestLeave }) {
       <div className={`rounded-xl border p-3 flex items-center gap-2.5 ${theme.borderLight}`}>
         <span className="w-9 h-9 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0"><DollarSign className="w-4 h-4" /></span>
         <div className="min-w-0">
-          <p className={`text-[11px] ${theme.subtleText}`}>{isPerProject(employee) ? "Per-Project Earnings" : "Monthly Salary"}</p>
+          <p className={`text-[11px] ${theme.subtleText}`}>{isPerProject(employee) ? "Per-Project Earnings (completed only)" : "Monthly Salary"}</p>
           <p className={`font-bold ${theme.headingText}`}>
             {isPerProject(employee) ? fmtMoney(employee.commissionTotal) : employee.salary != null ? fmtMoney(employee.salary) : "Not set"}
           </p>
@@ -2727,15 +2727,23 @@ function EmployeeDetailsModal({
                   {commissionRows.length === 0 ? (
                     <p className={`text-xs ${theme.subtleText}`}>No project or task commission added yet.</p>
                   ) : (
-                    commissionRows.map((r) => (
-                      <div key={r.id} className={`flex items-center justify-between gap-2 text-xs rounded-lg px-2.5 py-1.5 ${theme.inputBg}`}>
-                        <span className={`min-w-0 truncate ${theme.cardText}`}>
-                          <span className="font-semibold">{r.label || (r.kind === "task" ? "Task" : "Project")}</span>
-                          <span className={theme.subtleText}> · {r.kind === "task" ? "Task" : "Project"}{r.status ? ` · ${r.status}` : ""}</span>
-                        </span>
-                        <span className={`font-semibold shrink-0 ${theme.cardText}`}>{fmtMoney(r.amount)}</span>
-                      </div>
-                    ))
+                    commissionRows.map((r) => {
+                      const removed = r.state === "removed";
+                      const pending = r.state === "pending";
+                      return (
+                        <div key={r.id} className={`flex items-center justify-between gap-2 text-xs rounded-lg px-2.5 py-1.5 ${theme.inputBg} ${removed ? "opacity-70" : ""}`}>
+                          <span className={`min-w-0 truncate ${theme.cardText}`}>
+                            <span className={`font-semibold ${removed ? "line-through" : ""}`}>{r.label || (r.kind === "task" ? "Task" : "Project")}</span>
+                            <span className={removed ? "text-rose-500" : theme.subtleText}>
+                              {" · "}{removed ? (r.stateNote || "Project removed or deactivated") : `${r.kind === "task" ? "Task" : "Project"}${r.status ? ` · ${r.status}` : ""}`}
+                            </span>
+                          </span>
+                          <span className={`font-semibold shrink-0 ${removed ? "line-through opacity-60" : pending ? "opacity-60" : ""} ${theme.cardText}`} title={pending ? "Counted once this is completed" : removed ? "Not counted" : ""}>
+                            {fmtMoney(r.amount)}
+                          </span>
+                        </div>
+                      );
+                    })
                   )}
                 </div>
               )}

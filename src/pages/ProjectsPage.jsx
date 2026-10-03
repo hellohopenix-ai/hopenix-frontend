@@ -2249,7 +2249,22 @@ export default function ProjectsPage({ darkMode = false, conversations, setConve
     showToast(count > 0 ? `Deleted ${count} daily report${count === 1 ? "" : "s"} for ${project.name}.` : `No daily reports found for ${project.name}.`, count > 0 ? "success" : "error");
   };
 
+  // Double-click guard: handleCreate runs many awaits (project, modules,
+  // files, commissions) while the popup is still open, so a second click
+  // used to start a SECOND full create -> 2-3 copies of the same project,
+  // each with its own commission. Only one create may run at a time.
+  const createInFlightRef = useRef(false);
   const handleCreate = async (data) => {
+    if (createInFlightRef.current) return;
+    createInFlightRef.current = true;
+    try {
+      await handleCreateInner(data);
+    } finally {
+      createInFlightRef.current = false;
+    }
+  };
+
+  const handleCreateInner = async (data) => {
     // Combine the manager with any additionally selected team members, no duplicates.
     const combinedTeam = Array.from(
       new Set([...(data.manager ? [data.manager] : []), ...(data.team || [])])
@@ -2413,7 +2428,9 @@ export default function ProjectsPage({ darkMode = false, conversations, setConve
       briefFile,
       completedZip,
     };
-    setProjects((list) => [fresh, ...list]);
+    // De-dupe by id: a background refresh may already have pulled this same
+    // project from the server while the create was still finishing.
+    setProjects((list) => [fresh, ...list.filter((p) => p.id !== fresh.id)]);
     setCreateOpen(false);
     setSelectedId(id);
     setDetailsOpen(true);
@@ -3995,6 +4012,7 @@ function DeliverablePreviewModal({ data, darkMode, card, cardText, mutedText, su
 ====================================================================== */
 
 function CreateProjectModal({ onClose, onSubmit, darkMode, teamOptions = [], excludeAssignees = [], teamDirectory = {}, clientOptions = [], isAdmin, currentUser }) {
+  const [submitting, setSubmitting] = useState(false);
   const [form, setForm] = useState({
     name: "", description: "", projectType: "company", client: "", manager: "", team: [], deadline: "", budget: "", features: "", requirements: "",
     briefFile: null, // { id, fileName, mime, size, storedInIDB } (or legacy { id, fileName, dataUrl, mime, size, storedInIDB: false })
@@ -4492,8 +4510,20 @@ function CreateProjectModal({ onClose, onSubmit, darkMode, teamOptions = [], exc
         </div>
         <div className="flex gap-2 mt-5">
           <button onClick={onClose} className={`flex-1 border text-sm font-semibold py-2.5 rounded-full ${inputCls}`}>Cancel</button>
-          <button disabled={!canSubmit} onClick={() => onSubmit(form)} className="flex-1 bg-gradient-to-r from-violet-600 to-indigo-600 hover:opacity-90 disabled:opacity-40 text-white text-sm font-semibold py-2.5 rounded-full transition">
-            Create Project
+          <button
+            disabled={!canSubmit || submitting}
+            onClick={async () => {
+              if (submitting) return;
+              setSubmitting(true);
+              try {
+                await onSubmit(form);
+              } finally {
+                setSubmitting(false);
+              }
+            }}
+            className="flex-1 bg-gradient-to-r from-violet-600 to-indigo-600 hover:opacity-90 disabled:opacity-40 text-white text-sm font-semibold py-2.5 rounded-full transition"
+          >
+            {submitting ? "Creating…" : "Create Project"}
           </button>
         </div>
       </div>

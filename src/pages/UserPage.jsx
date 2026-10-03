@@ -693,22 +693,30 @@ function UserDetailModal({ rawUser, onApprove, onUpdateRole, onUpdateSalary, onU
                 Projects or Tasks assign popup.
               </p>
               <div className={`rounded-lg border px-3 py-2.5 mb-2 flex items-center justify-between ${darkMode ? "border-slate-700 bg-slate-800/60" : "border-emerald-100 bg-emerald-50/60"}`}>
-                <span className="text-xs font-semibold text-slate-500">Total earned</span>
+                <span className="text-xs font-semibold text-slate-500">Total earned <span className="font-normal text-slate-400">(completed only)</span></span>
                 <span className="text-sm font-bold">{fmtMoney(rawUser.commissionTotal)}</span>
               </div>
               {commissionRows.length === 0 ? (
                 <p className="text-xs text-slate-400">No project or task commission added yet.</p>
               ) : (
                 <div className="space-y-1.5 max-h-48 overflow-y-auto">
-                  {commissionRows.map((r) => (
-                    <div key={r.id} className={`flex items-center justify-between gap-2 text-xs rounded-lg px-2.5 py-1.5 ${darkMode ? "bg-slate-800" : "bg-slate-50"}`}>
-                      <span className="min-w-0 truncate">
-                        <span className="font-semibold">{r.label || (r.kind === "task" ? "Task" : "Project")}</span>
-                        <span className="text-slate-400"> · {r.kind === "task" ? "Task" : "Project"}{r.status ? ` · ${r.status}` : ""}</span>
-                      </span>
-                      <span className="font-semibold shrink-0">{fmtMoney(r.amount)}</span>
-                    </div>
-                  ))}
+                  {commissionRows.map((r) => {
+                    const removed = r.state === "removed";
+                    const pending = r.state === "pending";
+                    return (
+                      <div key={r.id} className={`flex items-center justify-between gap-2 text-xs rounded-lg px-2.5 py-1.5 ${darkMode ? "bg-slate-800" : "bg-slate-50"} ${removed ? "opacity-70" : ""}`}>
+                        <span className="min-w-0 truncate">
+                          <span className={`font-semibold ${removed ? "line-through" : ""}`}>{r.label || (r.kind === "task" ? "Task" : "Project")}</span>
+                          <span className={removed ? "text-rose-500" : "text-slate-400"}>
+                            {" · "}{removed ? (r.stateNote || "Project removed or deactivated") : `${r.kind === "task" ? "Task" : "Project"}${r.status ? ` · ${r.status}` : ""}`}
+                          </span>
+                        </span>
+                        <span className={`font-semibold shrink-0 ${removed ? "line-through text-slate-400" : pending ? "text-slate-400" : ""}`} title={pending ? "Counted once this is completed" : removed ? "Not counted" : ""}>
+                          {fmtMoney(r.amount)}
+                        </span>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
