@@ -607,6 +607,11 @@ export default function LoginPage() {
     }
   });
   const [emailTouched, setEmailTouched] = useState(false);
+  // Showing the login page means nobody is signed in — forget the last
+  // dashboard page so the next login starts on the first allowed page.
+  useEffect(() => {
+    try { sessionStorage.removeItem("hopenix_active_tab_v1"); } catch { /* ignore */ }
+  }, []);
   const [password, setPassword] = useState("");
   const [remember, setRemember] = useState(true);
   const [error, setError] = useState("");

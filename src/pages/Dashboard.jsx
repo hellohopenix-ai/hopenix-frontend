@@ -379,6 +379,29 @@ const NAV_ITEMS = [
   { label: "Settings", icon: Settings },
 ];
 
+/* Remembers which sidebar page the person is on, so a browser reload keeps
+   them there instead of jumping back to the Dashboard. Kept per tab in
+   sessionStorage and cleared on logout / when the login page opens, so a
+   fresh login always starts on the first page they're allowed to see. */
+const ACTIVE_TAB_KEY = "hopenix_active_tab_v1";
+function readSavedTab(userId) {
+  try {
+    const raw = sessionStorage.getItem(ACTIVE_TAB_KEY);
+    if (!raw) return null;
+    const saved = JSON.parse(raw);
+    if (saved && saved.uid === userId && NAV_ITEMS.some((item) => item.label === saved.tab)) return saved.tab;
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+/* First allowed page in SIDEBAR order (Dashboard, Projects, Messages, ...),
+   not in whatever order the admin happened to tick the boxes. */
+function firstAllowedPage(allowedPages) {
+  const item = NAV_ITEMS.find((n) => allowedPages.includes(n.label) && n.label !== "Client Portal");
+  return item ? item.label : allowedPages[0];
+}
+
 const STAT_CARDS = [
   { label: "Total Sales", icon: ShoppingCart, hero: true, page: "Sales" },
   { label: "Total Purchase", icon: ShoppingCart, hero: false, page: "Expenses" },
@@ -1185,9 +1208,24 @@ export default function Dashboard() {
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
   const [active, setActive] = useState(() => {
-    const tab = searchParams.get("tab");
-    return tab && NAV_ITEMS.some((item) => item.label === tab) ? tab : "Dashboard";
+    const urlTab = searchParams.get("tab");
+    const tab =
+      urlTab && NAV_ITEMS.some((item) => item.label === urlTab)
+        ? urlTab
+        : readSavedTab(user?.id) || "Dashboard"; // reload keeps the current page
+    // Not allowed for this person (e.g. Dashboard turned off for their role)?
+    // Start on the first page in the sidebar that they CAN open.
+    if (allowedPages.length && !allowedPages.includes(tab)) return firstAllowedPage(allowedPages);
+    return tab;
   });
+  useEffect(() => {
+    if (user?.id == null) return;
+    try {
+      sessionStorage.setItem(ACTIVE_TAB_KEY, JSON.stringify({ uid: user.id, tab: active }));
+    } catch {
+      /* ignore */
+    }
+  }, [active, user?.id]);
   // Set when a Web Push notification for a new message was clicked (see
   // public/sw.js) — tells MessagesPage which conversation to open straight
   // to, instead of just landing on whatever thread was last open.
@@ -1347,7 +1385,7 @@ export default function Dashboard() {
   // to see fixes both the loop and the leak.
   useEffect(() => {
     if (allowedPages.length && !allowedPages.includes(active)) {
-      setActive(allowedPages[0]);
+      setActive(firstAllowedPage(allowedPages));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allowedPages.join(",")]);

@@ -782,6 +782,7 @@ export function AuthProvider({ children }) {
       } catch {
         // Saved token is invalid/expired — clear it.
         localStorage.removeItem(TOKEN_KEY);
+        try { sessionStorage.removeItem("hopenix_active_tab_v1"); } catch { /* ignore */ }
       } finally {
         setAuthLoading(false);
       }
@@ -1003,6 +1004,7 @@ export function AuthProvider({ children }) {
       // even if the network call fails, still clear the local session below
     }
     localStorage.removeItem(TOKEN_KEY);
+    try { sessionStorage.removeItem("hopenix_active_tab_v1"); } catch { /* ignore */ } // next login starts on the first page
     clearLocalFlags("staff"); // next person on this browser must not inherit these flags
     setUser(null);
     setUsers([]);
