@@ -552,6 +552,19 @@ export default function CompleteProfilePage() {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
   const [stepIndex, setStepIndex] = useState(0);
+  // Always show each step from the top (on first open and every Next / Back),
+  // so on mobile the person doesn't land halfway down the page.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const toTop = () => {
+      window.scrollTo(0, 0);
+      if (document.documentElement) document.documentElement.scrollTop = 0;
+      if (document.body) document.body.scrollTop = 0;
+    };
+    toTop();
+    const raf = requestAnimationFrame(toTop);
+    return () => cancelAnimationFrame(raf);
+  }, [stepIndex]);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   // Tracks which fields the user has actually interacted with, so format
