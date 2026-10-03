@@ -2776,7 +2776,9 @@ export default function TasksPage({ darkMode = false, conversations = [], setCon
     setScrollTick((n) => n + 1);
   };
   useEffect(() => {
-    if (!selectedTaskId || scrollTick === 0) return;
+    // Also scroll when a project-group row (e.g. "Website") is tapped — that
+    // clears selectedTaskId and sets selectedProjectKey instead.
+    if ((!selectedTaskId && !selectedProjectKey) || scrollTick === 0) return;
     if (typeof window === "undefined") return;
     const isMobile = window.matchMedia("(max-width: 1023px)").matches;
     if (!isMobile) return;
@@ -2795,7 +2797,7 @@ export default function TasksPage({ darkMode = false, conversations = [], setCon
       cancelAnimationFrame(raf1);
       if (raf2) cancelAnimationFrame(raf2);
     };
-  }, [selectedTaskId, scrollTick]);
+  }, [selectedTaskId, selectedProjectKey, scrollTick]);
   const [openMenuId, setOpenMenuId] = useState(null);
   // Scroll target for the stat cards above: clicking one sets the view/status
   // filter to match that card, then smooth-scrolls the task list into view
