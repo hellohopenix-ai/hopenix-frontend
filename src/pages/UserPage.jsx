@@ -419,6 +419,46 @@ function DetailRow({ label, value }) {
   );
 }
 
+/* Bank details checks — same rules as CompleteProfilePage.jsx, but every
+   field is optional here (an admin may only be fixing one of them). */
+function formatIBAN(raw) {
+  return String(raw || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 34);
+}
+function ibanChecksumValid(iban) {
+  if (!/^[A-Z]{2}\d{2}[A-Z0-9]+$/.test(iban)) return false;
+  const rearranged = iban.slice(4) + iban.slice(0, 4);
+  const converted = rearranged
+    .split("")
+    .map((ch) => (/[0-9]/.test(ch) ? ch : (ch.charCodeAt(0) - 55).toString()))
+    .join("");
+  let remainder = converted;
+  while (remainder.length > 2) {
+    const chunk = remainder.slice(0, 9);
+    remainder = String(parseInt(chunk, 10) % 97) + remainder.slice(chunk.length);
+  }
+  return parseInt(remainder, 10) % 97 === 1;
+}
+function ibanError(value) {
+  const iban = String(value || "").replace(/\s+/g, "").toUpperCase();
+  if (!iban) return "";
+  if (iban.startsWith("PK") && iban.length !== 24) return `Pakistani IBAN must be 24 characters (currently ${iban.length}).`;
+  if (iban.length < 15 || iban.length > 34) return "IBAN length looks incorrect.";
+  if (!/^[A-Z]{2}\d{2}[A-Z0-9]+$/.test(iban)) return "IBAN must start with a 2-letter country code and 2 check digits (e.g. PK36...).";
+  if (!ibanChecksumValid(iban)) return "This IBAN doesn't check out — please re-check the digits.";
+  return "";
+}
+function formatAccountNumber(raw) {
+  return String(raw || "").replace(/[^\d-]/g, "").slice(0, 24);
+}
+function accountNumberError(value) {
+  const digits = String(value || "").replace(/\D/g, "");
+  if (!digits) return "";
+  if (digits.length < 5) return "Account number looks too short.";
+  if (digits.length > 20) return "Account number looks too long.";
+  if (/^(\d)\1+$/.test(digits)) return "Enter a valid account number.";
+  return "";
+}
+
 // Module-level on purpose: defining this inside the modal would remount the
 // inputs on every keystroke and drop focus.
 function EditRow({ label, children }) {
@@ -517,6 +557,40 @@ function UserDetailModal({ rawUser, onApprove, onUpdateRole, onUpdateSalary, onU
     setSavingDetails(false);
     if (res?.success) setEditingDetails(false);
     else setDetailsError(res?.error || "Could not save. Please try again.");
+  };
+  // Admin editing of the user's bank account details.
+  const [editingBank, setEditingBank] = useState(false);
+  const [savingBank, setSavingBank] = useState(false);
+  const [bankError, setBankError] = useState("");
+  const [bankDraft, setBankDraft] = useState({});
+  const setBank = (key, value) => setBankDraft((d) => ({ ...d, [key]: value }));
+  const startEditBank = () => {
+    setBankDraft({
+      bankName: rawUser.bankName || "",
+      accountTitle: rawUser.accountTitle || "",
+      accountNumber: rawUser.accountNumber || "",
+      iban: rawUser.iban || "",
+      branchCode: rawUser.branchCode || "",
+    });
+    setBankError("");
+    setEditingBank(true);
+  };
+  const cancelEditBank = () => {
+    setEditingBank(false);
+    setBankError("");
+  };
+  const saveBank = async () => {
+    const problem = accountNumberError(bankDraft.accountNumber) || ibanError(bankDraft.iban);
+    if (problem) {
+      setBankError(problem);
+      return;
+    }
+    setSavingBank(true);
+    setBankError("");
+    const res = typeof onUpdateDetails === "function" ? await onUpdateDetails(rawUser.id, bankDraft) : { success: false };
+    setSavingBank(false);
+    if (res?.success) setEditingBank(false);
+    else setBankError(res?.error || "Could not save. Please try again.");
   };
   const editInputCls = `w-full border rounded-lg px-3 py-1.5 text-sm outline-none focus:border-violet-400 ${
     darkMode ? "bg-slate-800 border-slate-700 text-slate-200" : "bg-white border-slate-200"
@@ -861,12 +935,77 @@ function UserDetailModal({ rawUser, onApprove, onUpdateRole, onUpdateSalary, onU
           )}
         </DetailSection>
 
-        <DetailSection title="Bank Account Details">
-          <DetailRow label="Bank Name" value={rawUser.bankName} />
-          <DetailRow label="Account Title" value={rawUser.accountTitle} />
-          <DetailRow label="Account Number" value={rawUser.accountNumber} />
-          <DetailRow label="IBAN" value={rawUser.iban} />
-          <DetailRow label="Branch Code" value={rawUser.branchCode} />
+        <DetailSection
+          title="Bank Account Details"
+          action={
+            editingBank ? (
+              <span className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={cancelEditBank}
+                  disabled={savingBank}
+                  className={`text-xs font-semibold px-3 py-1 rounded-full border ${darkMode ? "border-slate-700 text-slate-300" : "border-slate-200 text-slate-600"}`}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={saveBank}
+                  disabled={savingBank}
+                  className="text-xs font-semibold px-3 py-1 rounded-full bg-violet-600 hover:bg-violet-500 text-white disabled:opacity-60"
+                >
+                  {savingBank ? "Saving…" : "Save"}
+                </button>
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={startEditBank}
+                className="text-xs font-semibold text-violet-600 hover:text-violet-500 border border-violet-200 rounded-full px-3 py-1 transition"
+              >
+                Edit
+              </button>
+            )
+          }
+        >
+          {editingBank ? (
+            <>
+              <EditRow label="Bank Name">
+                <input className={editInputCls} value={bankDraft.bankName} onChange={(e) => setBank("bankName", e.target.value)} />
+              </EditRow>
+              <EditRow label="Account Title">
+                <input className={editInputCls} value={bankDraft.accountTitle} onChange={(e) => setBank("accountTitle", e.target.value)} />
+              </EditRow>
+              <EditRow label="Account Number">
+                <input
+                  className={editInputCls}
+                  inputMode="numeric"
+                  value={bankDraft.accountNumber}
+                  onChange={(e) => setBank("accountNumber", formatAccountNumber(e.target.value))}
+                />
+              </EditRow>
+              <EditRow label="IBAN">
+                <input
+                  className={editInputCls}
+                  placeholder="PK36XXXX0000000000000000"
+                  value={bankDraft.iban}
+                  onChange={(e) => setBank("iban", formatIBAN(e.target.value))}
+                />
+              </EditRow>
+              <EditRow label="Branch Code">
+                <input className={editInputCls} value={bankDraft.branchCode} onChange={(e) => setBank("branchCode", e.target.value)} />
+              </EditRow>
+              {bankError && <p className="text-xs text-red-500 mt-2">{bankError}</p>}
+            </>
+          ) : (
+            <>
+              <DetailRow label="Bank Name" value={rawUser.bankName} />
+              <DetailRow label="Account Title" value={rawUser.accountTitle} />
+              <DetailRow label="Account Number" value={rawUser.accountNumber} />
+              <DetailRow label="IBAN" value={rawUser.iban} />
+              <DetailRow label="Branch Code" value={rawUser.branchCode} />
+            </>
+          )}
         </DetailSection>
 
         <DetailSection title="Compensation">
@@ -1362,7 +1501,7 @@ export default function UserPage({ darkMode = false }) {
   const handleModalDetailsUpdate = async (id, details) => {
     if (typeof updateUserDetails !== "function") return { success: false, error: "Not available." };
     const res = await updateUserDetails(id, details);
-    if (res?.success) showToast("User details updated.", "success");
+    if (res?.success) showToast("Details updated.", "success");
     return res;
   };
 

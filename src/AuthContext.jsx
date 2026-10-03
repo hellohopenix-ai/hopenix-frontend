@@ -1228,6 +1228,12 @@ export function AuthProvider({ children }) {
       permanentAddress: "permanent_address",
       city: "city",
       country: "country",
+      // Bank account details (Users page -> Bank Account Details card).
+      bankName: "bank_name",
+      accountTitle: "account_title",
+      accountNumber: "account_number",
+      iban: "iban",
+      branchCode: "branch_code",
     };
     const body = {};
     Object.keys(details || {}).forEach((key) => {
