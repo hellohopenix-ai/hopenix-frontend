@@ -419,22 +419,128 @@ function DetailRow({ label, value }) {
   );
 }
 
-function DetailSection({ title, children }) {
+// Module-level on purpose: defining this inside the modal would remount the
+// inputs on every keystroke and drop focus.
+function EditRow({ label, children }) {
+  return (
+    <div className="grid grid-cols-3 gap-2 py-1.5 text-sm items-center">
+      <span className="text-slate-500 col-span-1">{label}</span>
+      <span className="col-span-2">{children}</span>
+    </div>
+  );
+}
+
+function DetailSection({ title, children, action = null }) {
   return (
     <div className="mb-5">
-      <h4 className="text-xs font-bold uppercase tracking-wider text-violet-500 mb-2">{title}</h4>
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <h4 className="text-xs font-bold uppercase tracking-wider text-violet-500">{title}</h4>
+        {action}
+      </div>
       {children}
     </div>
   );
 }
 
-function UserDetailModal({ rawUser, onApprove, onUpdateRole, onUpdateSalary, onUpdatePayType, onClose, darkMode }) {
+/* Same CNIC / phone rules as CompleteProfilePage.jsx, used when an admin
+   edits a user's details in the popup. */
+function formatCNIC(raw) {
+  const digits = String(raw || "").replace(/\D/g, "").slice(0, 13);
+  return [digits.slice(0, 5), digits.slice(5, 12), digits.slice(12, 13)].filter(Boolean).join("-");
+}
+function cnicError(value) {
+  const digits = String(value || "").replace(/\D/g, "");
+  if (digits.length !== 13) return `CNIC must be 13 digits (${digits.length}/13).`;
+  if (/^(\d)\1{12}$/.test(digits)) return "Enter a valid CNIC number.";
+  return "";
+}
+function formatPhone(raw) {
+  const digits = String(raw || "").replace(/\D/g, "").slice(0, 11);
+  return [digits.slice(0, 4), digits.slice(4, 11)].filter(Boolean).join("-");
+}
+function phoneError(value, label = "Phone number") {
+  const digits = String(value || "").replace(/\D/g, "");
+  if (!digits) return `${label} is required.`;
+  if (!digits.startsWith("03")) return `${label} must start with 03 (e.g. 0300-1234567).`;
+  if (digits.length !== 11) return `${label} must be 11 digits (${digits.length}/11).`;
+  if (/^(\d)\1{10}$/.test(digits)) return `Enter a valid ${label.toLowerCase()}.`;
+  return "";
+}
+
+function UserDetailModal({ rawUser, onApprove, onUpdateRole, onUpdateSalary, onUpdatePayType, onUpdateDetails, onClose, darkMode }) {
   const modalCard = darkMode ? "bg-slate-900 text-slate-100" : "bg-white";
   const inputCls = darkMode ? "bg-slate-800 border-slate-700 text-slate-200" : "border-slate-200";
   const isPending = rawUser.status === "pending";
   const [roleDraft, setRoleDraft] = useState(rawUser.role || "");
   const [deptDraft, setDeptDraft] = useState(rawUser.department || "");
   const [salaryDraft, setSalaryDraft] = useState(rawUser.salary != null ? String(rawUser.salary) : "");
+  // Admin editing of the user's personal / contact details (phone, CNIC, ...).
+  const [editingDetails, setEditingDetails] = useState(false);
+  const [savingDetails, setSavingDetails] = useState(false);
+  const [detailsError, setDetailsError] = useState("");
+  const [detailsDraft, setDetailsDraft] = useState({});
+  const setDraft = (key, value) => setDetailsDraft((d) => ({ ...d, [key]: value }));
+  const startEditDetails = () => {
+    const dob = rawUser.dob && rawUser.dob !== "None" ? String(rawUser.dob).slice(0, 10) : "";
+    setDetailsDraft({
+      fatherName: rawUser.fatherName || "",
+      dob,
+      gender: String(rawUser.gender || "").toLowerCase(),
+      maritalStatus: String(rawUser.maritalStatus || "").toLowerCase(),
+      phone: rawUser.phone || "",
+      cnic: rawUser.cnic || "",
+      emergencyContact: rawUser.emergencyContact || "",
+      currentAddress: rawUser.currentAddress || "",
+      permanentAddress: rawUser.permanentAddress || "",
+      city: rawUser.city || "",
+      country: rawUser.country || "",
+    });
+    setDetailsError("");
+    setEditingDetails(true);
+  };
+  const cancelEditDetails = () => {
+    setEditingDetails(false);
+    setDetailsError("");
+  };
+  const saveDetails = async () => {
+    const problem =
+      phoneError(detailsDraft.phone) ||
+      (detailsDraft.cnic ? cnicError(detailsDraft.cnic) : "") ||
+      (detailsDraft.emergencyContact ? phoneError(detailsDraft.emergencyContact, "Emergency contact") : "");
+    if (problem) {
+      setDetailsError(problem);
+      return;
+    }
+    setSavingDetails(true);
+    setDetailsError("");
+    const res = typeof onUpdateDetails === "function" ? await onUpdateDetails(rawUser.id, detailsDraft) : { success: false };
+    setSavingDetails(false);
+    if (res?.success) setEditingDetails(false);
+    else setDetailsError(res?.error || "Could not save. Please try again.");
+  };
+  const editInputCls = `w-full border rounded-lg px-3 py-1.5 text-sm outline-none focus:border-violet-400 ${
+    darkMode ? "bg-slate-800 border-slate-700 text-slate-200" : "bg-white border-slate-200"
+  }`;
+  const detailsButtons = editingDetails ? (
+    <span className="flex items-center gap-2">
+      <button
+        type="button"
+        onClick={cancelEditDetails}
+        disabled={savingDetails}
+        className={`text-xs font-semibold px-3 py-1 rounded-full border ${darkMode ? "border-slate-700 text-slate-300" : "border-slate-200 text-slate-600"}`}
+      >
+        Cancel
+      </button>
+      <button
+        type="button"
+        onClick={saveDetails}
+        disabled={savingDetails}
+        className="text-xs font-semibold px-3 py-1 rounded-full bg-violet-600 hover:bg-violet-500 text-white disabled:opacity-60"
+      >
+        {savingDetails ? "Saving…" : "Save"}
+      </button>
+    </span>
+  ) : null;
   // Pay type: "salary" (fixed monthly) or "per_project" (earns a commission
   // for each project / task assigned — added in the Projects / Tasks popups).
   const isPerProject = rawUser.payType === "per_project";
@@ -518,21 +624,114 @@ function UserDetailModal({ rawUser, onApprove, onUpdateRole, onUpdateSalary, onU
           </button>
         </div>
 
-        <DetailSection title="Personal Information">
-          <DetailRow label="Father / Guardian" value={rawUser.fatherName} />
-          <DetailRow label="Date of Birth" value={rawUser.dob} />
-          <DetailRow label="Gender" value={rawUser.gender} />
-          <DetailRow label="Marital Status" value={rawUser.maritalStatus} />
-          <DetailRow label="Phone" value={rawUser.phone} />
-          <DetailRow label="CNIC" value={rawUser.cnic} />
+        <DetailSection
+          title="Personal Information"
+          action={
+            editingDetails ? (
+              detailsButtons
+            ) : (
+              <button
+                type="button"
+                onClick={startEditDetails}
+                className="text-xs font-semibold text-violet-600 hover:text-violet-500 border border-violet-200 rounded-full px-3 py-1 transition"
+              >
+                Edit
+              </button>
+            )
+          }
+        >
+          {editingDetails ? (
+            <>
+              <EditRow label="Father / Guardian">
+                <input className={editInputCls} value={detailsDraft.fatherName} onChange={(e) => setDraft("fatherName", e.target.value)} />
+              </EditRow>
+              <EditRow label="Date of Birth">
+                <input type="date" className={editInputCls} value={detailsDraft.dob} onChange={(e) => setDraft("dob", e.target.value)} />
+              </EditRow>
+              <EditRow label="Gender">
+                <select className={editInputCls} value={detailsDraft.gender} onChange={(e) => setDraft("gender", e.target.value)}>
+                  <option value="">Select gender</option>
+                  <option value="male">Male</option>
+                  <option value="female">Female</option>
+                  <option value="other">Other</option>
+                </select>
+              </EditRow>
+              <EditRow label="Marital Status">
+                <select className={editInputCls} value={detailsDraft.maritalStatus} onChange={(e) => setDraft("maritalStatus", e.target.value)}>
+                  <option value="">Select marital status</option>
+                  <option value="single">Single</option>
+                  <option value="married">Married</option>
+                  <option value="divorced">Divorced</option>
+                  <option value="widowed">Widowed</option>
+                </select>
+              </EditRow>
+              <EditRow label="Phone">
+                <input
+                  className={editInputCls}
+                  inputMode="numeric"
+                  placeholder="0300-1234567"
+                  value={detailsDraft.phone}
+                  onChange={(e) => setDraft("phone", formatPhone(e.target.value))}
+                />
+              </EditRow>
+              <EditRow label="CNIC">
+                <input
+                  className={editInputCls}
+                  inputMode="numeric"
+                  placeholder="42101-1234567-1"
+                  value={detailsDraft.cnic}
+                  onChange={(e) => setDraft("cnic", formatCNIC(e.target.value))}
+                />
+              </EditRow>
+            </>
+          ) : (
+            <>
+              <DetailRow label="Father / Guardian" value={rawUser.fatherName} />
+              <DetailRow label="Date of Birth" value={rawUser.dob} />
+              <DetailRow label="Gender" value={rawUser.gender} />
+              <DetailRow label="Marital Status" value={rawUser.maritalStatus} />
+              <DetailRow label="Phone" value={rawUser.phone} />
+              <DetailRow label="CNIC" value={rawUser.cnic} />
+            </>
+          )}
         </DetailSection>
 
         <DetailSection title="Address & Contact">
-          <DetailRow label="Current Address" value={rawUser.currentAddress} />
-          <DetailRow label="Permanent Address" value={rawUser.permanentAddress} />
-          <DetailRow label="City" value={rawUser.city} />
-          <DetailRow label="Country" value={rawUser.country} />
-          <DetailRow label="Emergency Contact" value={rawUser.emergencyContact} />
+          {editingDetails ? (
+            <>
+              <EditRow label="Current Address">
+                <textarea rows={2} className={editInputCls} value={detailsDraft.currentAddress} onChange={(e) => setDraft("currentAddress", e.target.value)} />
+              </EditRow>
+              <EditRow label="Permanent Address">
+                <textarea rows={2} className={editInputCls} value={detailsDraft.permanentAddress} onChange={(e) => setDraft("permanentAddress", e.target.value)} />
+              </EditRow>
+              <EditRow label="City">
+                <input className={editInputCls} value={detailsDraft.city} onChange={(e) => setDraft("city", e.target.value)} />
+              </EditRow>
+              <EditRow label="Country">
+                <input className={editInputCls} value={detailsDraft.country} onChange={(e) => setDraft("country", e.target.value)} />
+              </EditRow>
+              <EditRow label="Emergency Contact">
+                <input
+                  className={editInputCls}
+                  inputMode="numeric"
+                  placeholder="0300-1234567"
+                  value={detailsDraft.emergencyContact}
+                  onChange={(e) => setDraft("emergencyContact", formatPhone(e.target.value))}
+                />
+              </EditRow>
+              {detailsError && <p className="text-xs text-red-500 mt-2">{detailsError}</p>}
+              <div className="flex justify-end mt-3">{detailsButtons}</div>
+            </>
+          ) : (
+            <>
+              <DetailRow label="Current Address" value={rawUser.currentAddress} />
+              <DetailRow label="Permanent Address" value={rawUser.permanentAddress} />
+              <DetailRow label="City" value={rawUser.city} />
+              <DetailRow label="Country" value={rawUser.country} />
+              <DetailRow label="Emergency Contact" value={rawUser.emergencyContact} />
+            </>
+          )}
         </DetailSection>
 
         {rawUser.education?.length > 0 && (
@@ -868,6 +1067,7 @@ export default function UserPage({ darkMode = false }) {
     inviteUser: ctxInviteUser,
     updateUserRole: ctxUpdateUserRole,
     updateUserProfile,
+    updateUserDetails,
     rolePermissions,
     updateRolePermissions,
     modulePermissions,
@@ -1155,6 +1355,15 @@ export default function UserPage({ darkMode = false }) {
       ok ? "Salary updated." : "Could not save salary. The user may not have completed their profile yet.",
       ok ? "success" : "error"
     );
+  };
+
+  // Admin edits a user's phone / CNIC / personal details. Returns
+  // { success, error } so the popup can show the server's message.
+  const handleModalDetailsUpdate = async (id, details) => {
+    if (typeof updateUserDetails !== "function") return { success: false, error: "Not available." };
+    const res = await updateUserDetails(id, details);
+    if (res?.success) showToast("User details updated.", "success");
+    return res;
   };
 
   // Switch how this person is paid: fixed monthly salary or per project.
@@ -1989,6 +2198,7 @@ export default function UserPage({ darkMode = false }) {
           onUpdateRole={handleModalRoleUpdate}
           onUpdateSalary={handleModalSalaryUpdate}
           onUpdatePayType={handleModalPayTypeUpdate}
+          onUpdateDetails={handleModalDetailsUpdate}
           onClose={() => setViewingUserId(null)}
           darkMode={darkMode}
         />

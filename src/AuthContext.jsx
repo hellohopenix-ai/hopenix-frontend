@@ -1207,6 +1207,41 @@ export function AuthProvider({ children }) {
     return true;
   }
 
+  /** Admin edits another user's personal / contact details (phone, CNIC,
+   *  father name, DOB, gender, marital status, emergency contact, address,
+   *  city, country) from the Users page detail popup. Real PATCH to
+   *  /users/<id>/profile/ (admin-only). Returns { success, error } so the
+   *  caller can show the server's message (e.g. "This CNIC is already
+   *  registered to another account."). */
+  async function updateUserDetails(id, details) {
+    const MAP = {
+      fatherName: "father_name",
+      dob: "dob",
+      gender: "gender",
+      maritalStatus: "marital_status",
+      phone: "phone",
+      cnic: "cnic",
+      emergencyContact: "emergency_contact",
+      currentAddress: "current_address",
+      permanentAddress: "permanent_address",
+      city: "city",
+      country: "country",
+    };
+    const body = {};
+    Object.keys(details || {}).forEach((key) => {
+      if (MAP[key]) body[MAP[key]] = details[key];
+    });
+    if (Object.keys(body).length === 0) return { success: false, error: "Nothing to save." };
+    try {
+      await apiFetch(`/users/${id}/profile/`, { method: "PATCH", body: JSON.stringify(body) });
+      await refreshUsers();
+      if (user?.id === id) setUser((prev) => (prev ? { ...prev, ...details } : prev));
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
   /** Change the CURRENTLY LOGGED-IN user's own password — SettingsPage.jsx's
    *  Security tab. Real verification happens server-side: POST
    *  /change-password/ checks currentPassword against the account's real
@@ -2094,6 +2129,7 @@ export function AuthProvider({ children }) {
         removeUser,
         assignManager,
         updateUserProfile,
+        updateUserDetails,
         changePassword,
         getCompanySettings,
         updateCompanySettings,
