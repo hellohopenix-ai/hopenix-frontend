@@ -154,6 +154,17 @@ function formatJoinedOn(iso) {
   }
 }
 
+function formatLastLogin(iso) {
+  if (!iso) return "—";
+  try {
+    return new Date(iso).toLocaleString(undefined, {
+      month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit",
+    });
+  } catch {
+    return "—";
+  }
+}
+
 function initials(name) {
   return name.split(" ").map((p) => p[0]).slice(0, 2).join("").toUpperCase();
 }
@@ -898,8 +909,8 @@ export default function UserPage({ darkMode = false }) {
           role: u.role || null,
           department: u.department || null,
           status: toUiStatus(u.status),
-          joinedOn: formatJoinedOn(u.createdAt),
-          lastLogin: "—",
+          joinedOn: formatJoinedOn(u.date_joined || u.createdAt),
+          lastLogin: formatLastLogin(u.last_login),
         })),
     [authUsers]
   );
@@ -1183,8 +1194,8 @@ export default function UserPage({ darkMode = false }) {
     setOpenActionMenu({ id, top: rect.bottom + 6, left });
   };
 
-  const handleInviteSubmit = (data) => {
-    const result = ctxInviteUser({
+  const handleInviteSubmit = async (data) => {
+    const result = await ctxInviteUser({
       name: data.name,
       email: data.email,
       role: data.role || null,
@@ -1199,7 +1210,11 @@ export default function UserPage({ darkMode = false }) {
     }
     setInviteOpen(false);
     setActiveTab("pending");
-    showToast("Invite sent. User added to pending approvals.", "success");
+    if (result.emailSent === false) {
+      showToast("User added, but the invite email could not be sent. Check the email (Resend) settings on the server.", "error");
+    } else {
+      showToast("Invite sent. User added to pending approvals.", "success");
+    }
   };
 
   // REAL module-level (view/create/edit/delete) access control. Toggling a

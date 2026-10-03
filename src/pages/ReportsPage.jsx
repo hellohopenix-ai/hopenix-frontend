@@ -615,8 +615,11 @@ export default function ReportsPage({
   const [refreshTick, setRefreshTick] = useState(0);
 
   function reloadDaily() {
+    // Admin view follows the date-range dropdown (week / month / ...). A
+    // specific day picked in the Daily Reports filter overrides it, and
+    // non-admins (who have no dropdown) keep seeing all of their own reports.
     reportsApi
-      .listAllDaily()
+      .listAllDaily(isAdmin && !adminDateFilter ? rangeParams : {})
       .then((res) => setDailyReports(res.results))
       .catch((err) => pushToast(err.message || "Could not load daily reports"));
   }
@@ -626,7 +629,7 @@ export default function ReportsPage({
     reloadDaily();
     reportsApi.listProjectNames().then(setProjects).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refreshTick]);
+  }, [refreshTick, rangeParams, isAdmin, adminDateFilter]);
 
   // Something outside this page (e.g. ProjectsPage) changed daily reports.
   useEffect(() => {

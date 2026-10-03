@@ -913,7 +913,7 @@ export function AuthProvider({ children }) {
         body: JSON.stringify({ name, email, role, department }),
       });
       await refreshUsers();
-      return { success: true, user: data.user };
+      return { success: true, user: data.user, emailSent: data.emailSent };
     } catch (err) {
       return { success: false, error: err.message };
     }

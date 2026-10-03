@@ -598,7 +598,14 @@ export default function LoginPage() {
   const navigate = useNavigate();
   const { loginUser, loginWithGoogle, logout } = useAuth();
   const [showPassword, setShowPassword] = useState(false);
-  const [email, setEmail] = useState("");
+  // Invite email link: /login?invited=1&email=name@company.com pre-fills the email.
+  const [email, setEmail] = useState(() => {
+    try {
+      return (new URLSearchParams(window.location.search).get("email") || "").trim();
+    } catch {
+      return "";
+    }
+  });
   const [emailTouched, setEmailTouched] = useState(false);
   const [password, setPassword] = useState("");
   const [remember, setRemember] = useState(true);
