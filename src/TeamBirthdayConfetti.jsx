@@ -24,8 +24,15 @@ import { FLAG_KEYS, syncFlag } from "./userFlags.js";
 const CONFETTI_COLORS = ["#8b5cf6", "#ec4899", "#f59e0b", "#22c55e", "#3b82f6", "#ef4444"];
 const DISMISS_DATE_KEY = FLAG_KEYS.teamConfettiDismissed; // synced per user via /api/flags/
 
+// LOCAL calendar date (same one isBirthdayToday() uses). It used to be the UTC
+// date (toISOString), which in Pakistan (UTC+5) flips at 5:00 AM instead of
+// midnight - so a banner closed between 12:00 and 5:00 AM came back once more
+// at 5:00 AM the same birthday.
 function todayKey() {
-  return new Date().toISOString().slice(0, 10);
+  const d = new Date();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${mm}-${dd}`;
 }
 
 function isDismissedToday() {
