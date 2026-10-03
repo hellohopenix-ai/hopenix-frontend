@@ -52,12 +52,18 @@ function emit(next) {
 /** Browser-tab icon follows the logo too (only once a custom one is set —
  *  otherwise the site's own favicon files stay untouched). */
 function applyFavicon(url) {
-  if (typeof document === "undefined" || !url) return;
+  if (typeof document === "undefined") return;
   let link = document.querySelector("link[rel='icon']");
   if (!link) {
     link = document.createElement("link");
     link.rel = "icon";
     document.head.appendChild(link);
+  }
+  if (!url) {
+    // No custom logo (or it was removed / failed to load): back to the Hopenix phoenix.
+    link.type = "image/png";
+    link.href = "/favicon.png";
+    return;
   }
   link.removeAttribute("type");
   link.href = url;
