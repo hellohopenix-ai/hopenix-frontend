@@ -9,13 +9,6 @@ import { useEffect, useRef, useState } from "react";
    --------------------------------------------------------------------------- */
 import phoenixLogo from "./assets/phoenix-logo.png";
 
-/* Separate ringtone (distinct from the birthday tune) that plays while the
-   "Incoming Call" screen is up, before the person taps Answer — same
-   sibling-assets-folder note as phoenixLogo above applies: double-check the
-   exact filename/extension you saved it as and adjust this import if it
-   doesn't match, or pass a `ringtoneSrc` prop from outside to override it. */
-import ringtoneAssetSrc from "./assets/ringtone..mp4";
-
 /* ===========================================================================
    BirthdayCard
    ---------------------------------------------------------------------------
@@ -186,16 +179,12 @@ export default function BirthdayCard({
   accent = "#7c3aed",
   birdImageSrc = phoenixLogo,
   soundSrc,
-  ringtoneSrc = ringtoneAssetSrc,
   onDismiss,
 }) {
-  // Incoming-call screen shown first (since the audio file starts with a
-  // ring) — the celebration itself (bird/letter/photo/cake) only starts
-  // once the person taps "Answer". This also solves sound autoplay: a
-  // button tap is a real user gesture, so the browser lets audio play
-  // immediately, no "tap to play" fallback needed.
-  const [callAnswered, setCallAnswered] = useState(false);
-  const [callDeclined, setCallDeclined] = useState(false);
+  // No "Incoming Call" screen any more: the celebration starts by itself the
+  // moment the person opens the website on their birthday (it used to wait
+  // for them to Answer, and Declining dismissed the card for the day, so the
+  // wish was never shown).
 
   // closed -> birdIn -> drop -> perchLetter -> open -> photo -> scroll
   const [stage, setStage] = useState("closed");
@@ -206,7 +195,6 @@ export default function BirthdayCard({
   const [capPlaced, setCapPlaced] = useState(false);
 
   useEffect(() => {
-    if (!callAnswered) return undefined;
     const timers = [
       setTimeout(() => setStage("birdIn"), 200),        // phoenix flies in with the letter
       setTimeout(() => setStage("drop"), 1300),         // it drops the letter, letter falls
@@ -216,7 +204,7 @@ export default function BirthdayCard({
       setTimeout(() => setStage("scroll"), 4400),       // scroll letter unrolls
     ];
     return () => timers.forEach(clearTimeout);
-  }, [callAnswered]);
+  }, []);
 
   // Once everything has settled, the phoenix comes back, loops around above
   // the photo badge twice, lands and drops a little party cap on it, winks,
@@ -243,60 +231,48 @@ export default function BirthdayCard({
   const photoBurst = useBurst(46, 0, 360, 90, 230);
   const risingText = useRisingText(16);
 
-  // Optional birthday tune/voice line (soundSrc) — only ever created and
-  // played from handleAnswerCall() below, i.e. directly inside a click
-  // handler, so it always counts as a real user gesture and browsers
-  // never block it.
+  // Optional birthday tune/voice line (soundSrc). It starts as soon as the
+  // card appears. Browsers can refuse sound before the person has touched the
+  // page at all - if that happens it starts on their first tap/click/key press
+  // instead (so there is never a "tap to play" screen in the way).
   const audioRef = useRef(null);
-  const ringtoneRef = useRef(null);
   const [soundMuted, setSoundMuted] = useState(false);
+  const soundMutedRef = useRef(false);
+  soundMutedRef.current = soundMuted;
 
-  // Ringtone — plays on loop for as long as the "Incoming Call" screen is
-  // up (just like a real phone ringing), and stops the instant the person
-  // answers or declines. If nothing is available at ringtoneSrc (asset
-  // missing and no override passed), this simply does nothing instead of
-  // throwing. Autoplay can still be blocked by the browser if this card
-  // ever appears with no prior interaction on the page at all — the
-  // catch() below swallows that silently, same as handleAnswerCall's own
-  // play() call.
   useEffect(() => {
-    if (callAnswered || callDeclined || !ringtoneSrc) return undefined;
-    const ringtone = new Audio(ringtoneSrc);
-    ringtone.loop = true;
-    ringtone.volume = 0.7;
-    ringtoneRef.current = ringtone;
-    ringtone.play().catch(() => {});
-    return () => {
-      ringtone.pause();
-      if (ringtoneRef.current === ringtone) ringtoneRef.current = null;
-    };
-  }, [callAnswered, callDeclined, ringtoneSrc]);
+    if (!soundSrc) return undefined;
+    const audio = new Audio(soundSrc);
+    // Loop the tune so it keeps playing for as long as the card is open — it
+    // only stops when the person dismisses the card (or mutes it).
+    audio.loop = true;
+    audio.volume = 0.6;
+    audioRef.current = audio;
 
-  const handleAnswerCall = () => {
-    setCallAnswered(true);
-    if (soundSrc && !soundMuted) {
-      const audio = new Audio(soundSrc);
-      // Loop the tune so it keeps playing for as long as the card is open,
-      // instead of stopping on its own once the file ends — it now only
-      // stops when the person actually dismisses the card (or mutes it).
-      audio.loop = true;
-      audio.volume = 0.6;
-      audioRef.current = audio;
-      audio.play().catch(() => {});
+    // Only these count as a real "user gesture" for browsers (touchstart does
+    // NOT - on phones the gesture is registered on touchend / pointerup), so
+    // all of them are listened for; the first one that lets play() through
+    // starts the tune and removes the listeners.
+    const events = ["pointerdown", "pointerup", "mousedown", "click", "touchend", "keydown"];
+    const detach = () => events.forEach((ev) => window.removeEventListener(ev, retryOnGesture, true));
+    function retryOnGesture() {
+      if (soundMutedRef.current) return;
+      audio.play().then(detach).catch(() => {});
     }
-  };
-
-  const handleDeclineCall = () => {
-    setCallDeclined(true);
-    onDismiss?.();
-  };
+    audio.play().catch(() => {
+      events.forEach((ev) => window.addEventListener(ev, retryOnGesture, true));
+    });
+    return () => {
+      detach();
+      audio.pause();
+      if (audioRef.current === audio) audioRef.current = null;
+    };
+  }, [soundSrc]);
 
   useEffect(() => {
     return () => {
       audioRef.current?.pause();
       audioRef.current = null;
-      ringtoneRef.current?.pause();
-      ringtoneRef.current = null;
     };
   }, []);
 
@@ -321,65 +297,6 @@ export default function BirthdayCard({
   const showScroll = stage === "scroll";
   const showIntro = stage === "birdIn" || stage === "drop" || stage === "perchLetter" || stage === "open";
   const showOutroBird = birdOutro !== "idle" && birdOutro !== "gone";
-
-  // Incoming-call screen — shown before anything else, while the phone is
-  // "ringing". Decline just dismisses like the old close button did;
-  // Answer reveals the actual celebration below and starts the audio.
-  if (!callAnswered) {
-    if (callDeclined) return null;
-    return (
-      <div className="fixed inset-0 z-[999] overflow-hidden bg-gradient-to-b from-[#1b1030] via-[#241148] to-[#160c2b] flex flex-col items-center justify-between py-14 px-6">
-        <div className="flex flex-col items-center mt-8">
-          <p className="text-white/70 text-sm tracking-widest uppercase mb-1">Incoming Call</p>
-          <p className="text-white text-2xl font-semibold">Hopenix Team</p>
-          <p className="text-white/50 text-xs mt-1">Birthday wishes for {displayName} 🎂</p>
-        </div>
-
-        <div className="relative flex items-center justify-center w-40 h-40">
-          <span className="absolute inset-0 m-auto w-40 h-40 rounded-full border-2 border-white/25" style={{ animation: "bday-call-ring-wave 1.8s ease-out infinite" }} />
-          <span className="absolute inset-0 m-auto w-40 h-40 rounded-full border-2 border-white/25" style={{ animation: "bday-call-ring-wave 1.8s ease-out 0.6s infinite" }} />
-          <span className="absolute inset-0 m-auto w-40 h-40 rounded-full border-2 border-white/25" style={{ animation: "bday-call-ring-wave 1.8s ease-out 1.2s infinite" }} />
-          <div
-            className="relative w-28 h-28 rounded-full overflow-hidden shadow-2xl border-4 bg-white"
-            style={{ borderColor: accent, animation: "bday-call-shake 0.9s ease-in-out infinite" }}
-          >
-            <img src={birdImageSrc} alt="" className="w-full h-full object-cover" />
-          </div>
-        </div>
-
-        <div className="flex items-center gap-16 mb-4">
-          <button
-            onClick={handleDeclineCall}
-            aria-label="Decline"
-            className="w-16 h-16 rounded-full bg-red-500 hover:bg-red-600 shadow-xl flex items-center justify-center text-2xl"
-            style={{ transform: "rotate(135deg)" }}
-          >
-            📞
-          </button>
-          <button
-            onClick={handleAnswerCall}
-            aria-label="Answer"
-            className="w-16 h-16 rounded-full bg-green-500 hover:bg-green-600 shadow-xl flex items-center justify-center text-2xl"
-            style={{ animation: "bday-call-shake 0.9s ease-in-out infinite" }}
-          >
-            📞
-          </button>
-        </div>
-
-        <style>{`
-          @keyframes bday-call-ring-wave {
-            0% { transform: scale(0.8); opacity: 0.9; }
-            100% { transform: scale(1.6); opacity: 0; }
-          }
-          @keyframes bday-call-shake {
-            0%, 100% { transform: rotate(0deg); }
-            25% { transform: rotate(-8deg); }
-            75% { transform: rotate(8deg); }
-          }
-        `}</style>
-      </div>
-    );
-  }
 
   return (
     <div className="fixed inset-0 z-[999] overflow-hidden pointer-events-none" style={{ perspective: 1400 }}>
