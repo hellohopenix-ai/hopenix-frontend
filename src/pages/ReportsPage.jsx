@@ -37,6 +37,7 @@ import {
   MessageSquare,
   Send,
   Paperclip,
+  FileArchive,
 } from "lucide-react";
 import { sendReportMessage } from "./MessagesPage.jsx";
 import * as reportsApi from "./reportsApi.js";
@@ -181,10 +182,25 @@ function todayStr() {
   return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 }
 
-function fileKind(mimeType) {
+function fileKind(mimeType, name = "") {
+  const lower = String(name || "").toLowerCase();
   if (mimeType?.startsWith("video/")) return "video";
   if (mimeType?.startsWith("image/")) return "image";
+  if (mimeType === "application/pdf" || lower.endsWith(".pdf")) return "pdf";
+  if (
+    lower.endsWith(".zip") ||
+    mimeType === "application/zip" ||
+    mimeType === "application/x-zip-compressed"
+  ) return "zip";
   return "file";
+}
+
+// Small icon for one attached file (photo / video / PDF / ZIP).
+function DailyFileIcon({ kind, size = 13, className = "" }) {
+  if (kind === "video") return <Video size={size} className={className} />;
+  if (kind === "pdf") return <FileText size={size} className={className} />;
+  if (kind === "zip") return <FileArchive size={size} className={className} />;
+  return <ImageIcon size={size} className={className} />;
 }
 
 function fmtBytes(n) {
@@ -743,16 +759,16 @@ export default function ReportsPage({
   /* ---------------------------------------------------------------- */
 
   function handleAddDailyFiles(fileList) {
-    const files = Array.from(fileList || []).filter((f) => f.type.startsWith("image/") || f.type.startsWith("video/"));
+    const files = Array.from(fileList || []).filter((f) => ["image", "video", "pdf", "zip"].includes(fileKind(f.type, f.name)));
     if (!files.length) {
-      pushToast("Only image and video files can be attached");
+      pushToast("Only photos, videos, PDF and ZIP files can be attached");
       return;
     }
     const next = files.map((file) => ({
       id: `f-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       file,
       previewUrl: URL.createObjectURL(file),
-      kind: fileKind(file.type),
+      kind: fileKind(file.type, file.name),
       name: file.name,
       type: file.type,
       size: file.size,
@@ -801,7 +817,7 @@ export default function ReportsPage({
   async function submitDailyReport(e) {
     e.preventDefault();
     if (!dailyNote.trim() && dailyPendingFiles.length === 0) {
-      pushToast("Add a note or upload a photo/video first");
+      pushToast("Add a note or upload a photo, video, PDF or ZIP first");
       return false;
     }
     setDailySubmitting(true);
@@ -1234,6 +1250,25 @@ export default function ReportsPage({
                           }}
                         />
                       </label>
+                      <label
+                        className={`col-span-2 flex items-center justify-center gap-1.5 rounded-lg border border-dashed px-2 py-2.5 text-[10.5px] font-medium cursor-pointer text-center ${
+                          darkMode ? "border-slate-700 text-slate-400 hover:bg-slate-800/50" : "border-slate-300 text-slate-500 hover:bg-slate-50"
+                        }`}
+                      >
+                        <FileText size={14} />
+                        <FileArchive size={14} />
+                        Upload PDF / ZIP
+                        <input
+                          type="file"
+                          accept=".pdf,application/pdf,.zip,application/zip,application/x-zip-compressed"
+                          multiple
+                          className="hidden"
+                          onChange={(e) => {
+                            handleAddDailyFiles(e.target.files);
+                            e.target.value = "";
+                          }}
+                        />
+                      </label>
                     </div>
                     <p className={`text-[9.5px] mt-1.5 ${subtleText}`}>
                       {dailyDragActive ? "Drop to add" : "Choose from your gallery, or drag & drop from your desktop."}
@@ -1246,6 +1281,12 @@ export default function ReportsPage({
                         <div key={f.id} className={`relative rounded-md overflow-hidden border aspect-square ${border}`}>
                           {f.kind === "image" ? (
                             <img src={f.previewUrl} alt={f.name} className="w-full h-full object-cover" />
+                          ) : f.kind === "pdf" || f.kind === "zip" ? (
+                            <div className={`w-full h-full flex flex-col items-center justify-center gap-0.5 px-0.5 ${darkMode ? "bg-slate-800 text-slate-300" : "bg-slate-50 text-slate-500"}`} title={f.name}>
+                              <DailyFileIcon kind={f.kind} size={16} />
+                              <span className="text-[8px] font-semibold uppercase leading-none">{f.kind}</span>
+                              <span className="text-[7.5px] leading-tight w-full text-center truncate">{f.name}</span>
+                            </div>
                           ) : (
                             <video src={f.previewUrl} className="w-full h-full object-cover" muted />
                           )}
@@ -1341,7 +1382,7 @@ export default function ReportsPage({
           <div>
             <h3 className={`font-semibold text-sm ${cardText}`}>{isAdmin ? "Report Categories" : "Daily Reports"}</h3>
             <p className={`text-[10.5px] mt-0.5 ${subtleText}`}>
-              {isAdmin ? "Choose a report type to view detailed insights and analytics." : "Log today's work — attach photos or a short video as proof."}
+              {isAdmin ? "Choose a report type to view detailed insights and analytics." : "Log today's work — attach photos, a short video, PDF or ZIP as proof."}
             </p>
           </div>
           {isAdmin && categoryFilter !== "All" && (
@@ -1395,7 +1436,7 @@ export default function ReportsPage({
             <p className={`text-[10.5px] mt-1 leading-snug ${subtleText}`}>
               {isAdmin
                 ? "Review every employee's daily work uploads — photos and videos."
-                : "Log today's work — attach photos or a short video as proof."}
+                : "Log today's work — attach photos, a short video, PDF or ZIP as proof."}
             </p>
             <p className="text-[10.5px] font-semibold mt-1.5 text-cyan-600">
               {isAdmin ? `${dailyReports.length} Submission${dailyReports.length === 1 ? "" : "s"}` : `${myDailyReports.length} Submitted`}
@@ -1506,7 +1547,7 @@ export default function ReportsPage({
               <p className={`text-[12.5px] font-semibold ${cardText}`}>
                 {isAdmin ? "No daily reports submitted yet." : "You haven't submitted a daily report yet"}
               </p>
-              <p className="text-[11px] mt-1">Use "Upload Daily Report" above to add photos, video and info.</p>
+              <p className="text-[11px] mt-1">Use "Upload Daily Report" above to add photos, video, PDF/ZIP and info.</p>
             </div>
           ) : (
             <>
@@ -1576,7 +1617,7 @@ export default function ReportsPage({
                                   title={`View ${f.name}`}
                                   className={`w-8 h-8 rounded-md border flex items-center justify-center shrink-0 ${border} ${darkMode ? "bg-slate-800" : "bg-slate-50"}`}
                                 >
-                                  {f.kind === "video" ? <Video size={13} className={subtleText} /> : <ImageIcon size={13} className={subtleText} />}
+                                  <DailyFileIcon kind={f.kind} size={13} className={subtleText} />
                                 </button>
                               ))}
                             </div>
@@ -1699,7 +1740,7 @@ export default function ReportsPage({
                               darkMode ? "bg-slate-800" : "bg-slate-50"
                             }`}
                           >
-                            {f.kind === "video" ? <Video size={14} className={subtleText} /> : <ImageIcon size={14} className={subtleText} />}
+                            <DailyFileIcon kind={f.kind} size={14} className={subtleText} />
                           </button>
                         ))}
                       </div>
@@ -2500,11 +2541,30 @@ export default function ReportsPage({
           <div className={`rounded-lg overflow-hidden flex items-center justify-center ${darkMode ? "bg-slate-950" : "bg-slate-900"}`}>
             {viewingMedia.kind === "video" ? (
               <video src={viewingMedia.url} controls autoPlay className="max-h-[70vh] w-full" />
+            ) : viewingMedia.kind === "pdf" ? (
+              <iframe src={viewingMedia.url} title={viewingMedia.name} className="h-[70vh] w-full bg-white" />
+            ) : viewingMedia.kind === "zip" ? (
+              <div className="flex flex-col items-center justify-center gap-2 py-10 px-4 text-slate-200">
+                <FileArchive size={40} />
+                <p className="text-xs text-center break-all">{viewingMedia.name}</p>
+                <p className="text-[10.5px] text-slate-400">ZIP files can't be previewed — download it to open.</p>
+              </div>
             ) : (
               <img src={viewingMedia.url} alt={viewingMedia.name} className="max-h-[70vh] w-full object-contain" />
             )}
           </div>
-          <p className={`text-[10.5px] mt-2 ${mutedText}`}>{fmtBytes(viewingMedia.size)}</p>
+          <div className="flex items-center justify-between gap-2 mt-2">
+            <p className={`text-[10.5px] ${mutedText}`}>{fmtBytes(viewingMedia.size)}</p>
+            {(viewingMedia.kind === "pdf" || viewingMedia.kind === "zip") && (
+              <a
+                href={viewingMedia.url}
+                download={viewingMedia.name}
+                className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold bg-violet-600 hover:bg-violet-500 text-white"
+              >
+                <Download size={13} /> Download
+              </a>
+            )}
+          </div>
         </Modal>
       )}
 
