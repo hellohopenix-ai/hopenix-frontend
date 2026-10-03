@@ -117,3 +117,24 @@ export const cancelAnnouncement = (announcementId) =>
   request(`/announcements/${announcementId}/`, { method: "DELETE" });
 export const markAnnouncementSeen = (announcementId) =>
   request(`/announcements/${announcementId}/seen/`, { method: "POST" });
+
+// -- Per-project pay (commissions) ----------------------------------------------
+// Employees whose pay type is "Per project" earn a commission for each
+// project / task they are assigned instead of a fixed monthly salary.
+
+export const fetchPayTypes = () => request("/pay-types/");
+
+export const fetchCommissions = ({ employee, task, project } = {}) => {
+  const qs = new URLSearchParams();
+  if (employee != null) qs.set("employee", employee);
+  if (task != null) qs.set("task", task);
+  if (project != null) qs.set("project", project);
+  const q = qs.toString();
+  return request(q ? `/commissions/?${q}` : "/commissions/");
+};
+
+// amount 0 removes the commission for that employee on that task/project.
+export const saveCommission = ({ employee, task, project, amount, note }) =>
+  request("/commissions/", { method: "POST", body: { employee, task, project, amount, note } });
+
+export const deleteCommission = (commissionId) => request(`/commissions/${commissionId}/`, { method: "DELETE" });

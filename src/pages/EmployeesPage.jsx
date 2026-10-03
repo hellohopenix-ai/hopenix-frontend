@@ -127,6 +127,11 @@ function fmtMoney(n) {
   return `PKR ${Number(n || 0).toLocaleString()}`;
 }
 
+/* "Per project" employees have no fixed monthly salary — their pay is the
+   running total of the commissions added on the projects / tasks they were
+   assigned (see the commission box in the Projects / Tasks popups). */
+const isPerProject = (e) => e?.payType === "per_project";
+
 /* Basic, forgiving email check — good enough to catch typos without being
    a strict RFC validator. */
 function isValidEmail(value) {
@@ -1064,8 +1069,10 @@ function MyProfileSection({ theme, employee, onRequestLeave }) {
       <div className={`rounded-xl border p-3 flex items-center gap-2.5 ${theme.borderLight}`}>
         <span className="w-9 h-9 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0"><DollarSign className="w-4 h-4" /></span>
         <div className="min-w-0">
-          <p className={`text-[11px] ${theme.subtleText}`}>Monthly Salary</p>
-          <p className={`font-bold ${theme.headingText}`}>{employee.salary != null ? fmtMoney(employee.salary) : "Not set"}</p>
+          <p className={`text-[11px] ${theme.subtleText}`}>{isPerProject(employee) ? "Per-Project Earnings" : "Monthly Salary"}</p>
+          <p className={`font-bold ${theme.headingText}`}>
+            {isPerProject(employee) ? fmtMoney(employee.commissionTotal) : employee.salary != null ? fmtMoney(employee.salary) : "Not set"}
+          </p>
         </div>
       </div>
     </div>
@@ -2035,7 +2042,9 @@ export default function EmployeesPage({ darkMode = false }) {
                       {showSalaryColumn && (
                         <td className={`py-2.5 px-2 whitespace-nowrap font-semibold ${theme.cardText}`}>
                           {canSeeSalary(e)
-                            ? (e.salary != null ? fmtMoney(e.salary) : <span className={theme.subtleText}>—</span>)
+                            ? (isPerProject(e)
+                                ? <>{fmtMoney(e.commissionTotal)}<span className={`block text-[10px] font-medium ${theme.subtleText}`}>Per project</span></>
+                                : (e.salary != null ? fmtMoney(e.salary) : <span className={theme.subtleText}>—</span>))
                             : <span className={theme.subtleText}>Hidden</span>}
                         </td>
                       )}
@@ -2200,7 +2209,7 @@ export default function EmployeesPage({ darkMode = false }) {
                   {showSalaryColumn && (
                     <div className={`flex items-center gap-1.5 text-xs font-semibold mt-1.5 ${theme.cardText}`}>
                       <DollarSign className="w-3.5 h-3.5 text-emerald-500" />
-                      {canSeeSalary(e) ? (e.salary != null ? fmtMoney(e.salary) : "—") : "Hidden"}
+                      {canSeeSalary(e) ? (isPerProject(e) ? `${fmtMoney(e.commissionTotal)} · per project` : e.salary != null ? fmtMoney(e.salary) : "—") : "Hidden"}
                     </div>
                   )}
                 </div>
@@ -2499,6 +2508,25 @@ function EmployeeDetailsModal({
   useEffect(() => {
     setSalaryInput(employee.salary != null ? String(employee.salary) : "");
   }, [employee.id, employee.salary]);
+  // Per-project employees: the project / task commissions that add up to
+  // what they earn (only fetched when the viewer is allowed to see pay).
+  const [commissionRows, setCommissionRows] = useState([]);
+  useEffect(() => {
+    if (!canSeeSalary || !isPerProject(employee)) {
+      setCommissionRows([]);
+      return undefined;
+    }
+    let alive = true;
+    employeesApi
+      .fetchCommissions({ employee: employee.authId ?? employee.id })
+      .then((rows) => {
+        if (alive) setCommissionRows(Array.isArray(rows) ? rows : []);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [canSeeSalary, employee.id, employee.authId, employee.payType, employee.commissionTotal]);
   return (
     <div className="fixed inset-0 z-[95] bg-black/50 flex items-center justify-center p-3 sm:p-4" onClick={onClose}>
       <div className={`rounded-2xl w-full max-w-lg max-h-[92vh] overflow-y-auto shadow-2xl ${theme.card}`} onClick={(e) => e.stopPropagation()}>
@@ -2688,11 +2716,30 @@ function EmployeeDetailsModal({
               <div className="flex items-center gap-2.5 mb-2.5">
                 <span className="w-9 h-9 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0"><DollarSign className="w-4 h-4" /></span>
                 <div>
-                  <p className={`text-[11px] ${theme.subtleText}`}>Monthly Salary</p>
-                  <p className={`font-bold ${theme.headingText}`}>{employee.salary != null ? fmtMoney(employee.salary) : "Not set"}</p>
+                  <p className={`text-[11px] ${theme.subtleText}`}>{isPerProject(employee) ? "Per-Project Earnings" : "Monthly Salary"}</p>
+                  <p className={`font-bold ${theme.headingText}`}>
+                    {isPerProject(employee) ? fmtMoney(employee.commissionTotal) : employee.salary != null ? fmtMoney(employee.salary) : "Not set"}
+                  </p>
                 </div>
               </div>
-              {typeof onSetSalary === "function" && (
+              {isPerProject(employee) && (
+                <div className="space-y-1.5">
+                  {commissionRows.length === 0 ? (
+                    <p className={`text-xs ${theme.subtleText}`}>No project or task commission added yet.</p>
+                  ) : (
+                    commissionRows.map((r) => (
+                      <div key={r.id} className={`flex items-center justify-between gap-2 text-xs rounded-lg px-2.5 py-1.5 ${theme.inputBg}`}>
+                        <span className={`min-w-0 truncate ${theme.cardText}`}>
+                          <span className="font-semibold">{r.label || (r.kind === "task" ? "Task" : "Project")}</span>
+                          <span className={theme.subtleText}> · {r.kind === "task" ? "Task" : "Project"}{r.status ? ` · ${r.status}` : ""}</span>
+                        </span>
+                        <span className={`font-semibold shrink-0 ${theme.cardText}`}>{fmtMoney(r.amount)}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+              {!isPerProject(employee) && typeof onSetSalary === "function" && (
                 <div className="flex items-center gap-2">
                   <input
                     type="number"

@@ -18,6 +18,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { useAuth, ALL_PAGES, getRoleCategory } from "../AuthContext.jsx";
+import { fetchCommissions } from "../api/employeesApi.js";
 
 /* ======================================================================
    STATIC CONFIG
@@ -416,13 +417,33 @@ function DetailSection({ title, children }) {
   );
 }
 
-function UserDetailModal({ rawUser, onApprove, onUpdateRole, onUpdateSalary, onClose, darkMode }) {
+function UserDetailModal({ rawUser, onApprove, onUpdateRole, onUpdateSalary, onUpdatePayType, onClose, darkMode }) {
   const modalCard = darkMode ? "bg-slate-900 text-slate-100" : "bg-white";
   const inputCls = darkMode ? "bg-slate-800 border-slate-700 text-slate-200" : "border-slate-200";
   const isPending = rawUser.status === "pending";
   const [roleDraft, setRoleDraft] = useState(rawUser.role || "");
   const [deptDraft, setDeptDraft] = useState(rawUser.department || "");
   const [salaryDraft, setSalaryDraft] = useState(rawUser.salary != null ? String(rawUser.salary) : "");
+  // Pay type: "salary" (fixed monthly) or "per_project" (earns a commission
+  // for each project / task assigned — added in the Projects / Tasks popups).
+  const isPerProject = rawUser.payType === "per_project";
+  const [commissionRows, setCommissionRows] = useState([]);
+  useEffect(() => {
+    if (!isPerProject) {
+      setCommissionRows([]);
+      return undefined;
+    }
+    let alive = true;
+    fetchCommissions({ employee: rawUser.id })
+      .then((rows) => {
+        if (alive) setCommissionRows(Array.isArray(rows) ? rows : []);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+    // commissionTotal changes whenever a commission is added/edited, so it re-pulls the list too.
+  }, [isPerProject, rawUser.id, rawUser.commissionTotal]);
   // Full-size preview for ID card images — opened by clicking a thumbnail below.
   const [lightboxImage, setLightboxImage] = useState(null); // { src, alt } | null
 
@@ -639,27 +660,83 @@ function UserDetailModal({ rawUser, onApprove, onUpdateRole, onUpdateSalary, onC
         </DetailSection>
 
         <DetailSection title="Compensation">
-          <label className="text-xs font-semibold text-slate-500 mb-1 block">Monthly Salary (PKR)</label>
-          <div className="flex gap-2">
-            <input
-              type="number"
-              min="0"
-              inputMode="decimal"
-              value={salaryDraft}
-              onChange={(e) => setSalaryDraft(e.target.value)}
-              placeholder="e.g. 80000"
-              className={`flex-1 text-sm border rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-violet-400 ${inputCls}`}
-            />
-            <button
-              onClick={() => onUpdateSalary(rawUser.id, salaryDraft)}
-              disabled={salaryDraft.trim() === "" || !Number.isFinite(Number(salaryDraft)) || Number(salaryDraft) < 0}
-              className="shrink-0 bg-violet-600 hover:bg-violet-500 disabled:opacity-40 text-white text-sm font-semibold px-4 rounded-lg transition"
-            >
-              Save
-            </button>
+          <label className="text-xs font-semibold text-slate-500 mb-1 block">Pay type</label>
+          <div className="grid grid-cols-2 gap-2 mb-3">
+            {[
+              { value: "salary", label: "Monthly Salary" },
+              { value: "per_project", label: "Per Project" },
+            ].map((opt) => {
+              const active = (isPerProject ? "per_project" : "salary") === opt.value;
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => !active && onUpdatePayType && onUpdatePayType(rawUser.id, opt.value)}
+                  className={`text-sm font-semibold py-2 rounded-lg border transition ${
+                    active
+                      ? "bg-violet-600 border-violet-600 text-white"
+                      : darkMode
+                      ? "border-slate-700 text-slate-300 hover:bg-slate-800"
+                      : "border-slate-200 text-slate-600 hover:bg-slate-50"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
           </div>
-          {rawUser.salary != null && rawUser.salary !== "" && (
-            <p className="text-xs text-slate-500 mt-1.5">Current: {fmtMoney(rawUser.salary)}/month</p>
+
+          {isPerProject ? (
+            <div>
+              <p className="text-xs text-slate-500 mb-2">
+                No fixed salary. This person earns a commission for each project / task they are assigned — add it in the
+                Projects or Tasks assign popup.
+              </p>
+              <div className={`rounded-lg border px-3 py-2.5 mb-2 flex items-center justify-between ${darkMode ? "border-slate-700 bg-slate-800/60" : "border-emerald-100 bg-emerald-50/60"}`}>
+                <span className="text-xs font-semibold text-slate-500">Total earned</span>
+                <span className="text-sm font-bold">{fmtMoney(rawUser.commissionTotal)}</span>
+              </div>
+              {commissionRows.length === 0 ? (
+                <p className="text-xs text-slate-400">No project or task commission added yet.</p>
+              ) : (
+                <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                  {commissionRows.map((r) => (
+                    <div key={r.id} className={`flex items-center justify-between gap-2 text-xs rounded-lg px-2.5 py-1.5 ${darkMode ? "bg-slate-800" : "bg-slate-50"}`}>
+                      <span className="min-w-0 truncate">
+                        <span className="font-semibold">{r.label || (r.kind === "task" ? "Task" : "Project")}</span>
+                        <span className="text-slate-400"> · {r.kind === "task" ? "Task" : "Project"}{r.status ? ` · ${r.status}` : ""}</span>
+                      </span>
+                      <span className="font-semibold shrink-0">{fmtMoney(r.amount)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div>
+            <label className="text-xs font-semibold text-slate-500 mb-1 block">Monthly Salary (PKR)</label>
+            <div className="flex gap-2">
+              <input
+                type="number"
+                min="0"
+                inputMode="decimal"
+                value={salaryDraft}
+                onChange={(e) => setSalaryDraft(e.target.value)}
+                placeholder="e.g. 80000"
+                className={`flex-1 text-sm border rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-violet-400 ${inputCls}`}
+              />
+              <button
+                onClick={() => onUpdateSalary(rawUser.id, salaryDraft)}
+                disabled={salaryDraft.trim() === "" || !Number.isFinite(Number(salaryDraft)) || Number(salaryDraft) < 0}
+                className="shrink-0 bg-violet-600 hover:bg-violet-500 disabled:opacity-40 text-white text-sm font-semibold px-4 rounded-lg transition"
+              >
+                Save
+              </button>
+            </div>
+            {rawUser.salary != null && rawUser.salary !== "" && (
+              <p className="text-xs text-slate-500 mt-1.5">Current: {fmtMoney(rawUser.salary)}/month</p>
+            )}
+            </div>
           )}
         </DetailSection>
 
@@ -1057,6 +1134,25 @@ export default function UserPage({ darkMode = false }) {
     }
     showToast(
       ok ? "Salary updated." : "Could not save salary. The user may not have completed their profile yet.",
+      ok ? "success" : "error"
+    );
+  };
+
+  // Switch how this person is paid: fixed monthly salary or per project.
+  // Saved through the same updateUserProfile path the salary uses.
+  const handleModalPayTypeUpdate = async (id, payType) => {
+    let ok = false;
+    try {
+      ok = typeof updateUserProfile === "function" ? (await updateUserProfile(id, { payType })) === true : false;
+    } catch {
+      ok = false;
+    }
+    showToast(
+      ok
+        ? payType === "per_project"
+          ? "Pay type set to Per Project."
+          : "Pay type set to Monthly Salary."
+        : "Could not change pay type. The user may not have completed their profile yet.",
       ok ? "success" : "error"
     );
   };
@@ -1869,6 +1965,7 @@ export default function UserPage({ darkMode = false }) {
           onApprove={handleModalApprove}
           onUpdateRole={handleModalRoleUpdate}
           onUpdateSalary={handleModalSalaryUpdate}
+          onUpdatePayType={handleModalPayTypeUpdate}
           onClose={() => setViewingUserId(null)}
           darkMode={darkMode}
         />

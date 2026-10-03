@@ -47,6 +47,7 @@ import { sendMessage as apiSendMessage } from "../messagesApi.js";
 import * as clientsApi from "../api/clientsApi.js";
 import { API_ROOT } from "../apiConfig.js";
 import { FLAG_KEYS, syncFlag } from "../userFlags.js";
+import CommissionFields, { syncCommissions, usePerProjectIds, useCommissionPrefill } from "../components/CommissionFields.jsx";
 
 /* ======================================================================
    BACKEND API (tasks app — see hopenix-backend/tasks/)
@@ -3303,6 +3304,10 @@ export default function TasksPage({ darkMode = false, conversations = [], setCon
     return list;
   }, [approvedUsers, user]);
 
+  // Ids of employees paid per project (not a monthly salary) — used to save
+  // the commission typed in the Create/Edit Task popups.
+  const perProjectIds = usePerProjectIds();
+
   // Opening Tasks counts as "seen" — clear this user's red-dot flag for
   // the sidebar the moment this page mounts (or the logged-in user changes).
   useEffect(() => {
@@ -4725,6 +4730,20 @@ export default function TasksPage({ darkMode = false, conversations = [], setCon
                     return idx !== -1 && saved[idx] ? { ...t, ...saved[idx] } : t;
                   })
                 );
+                // Per-project employees: save the commission typed in the
+                // popup against the real (backend) task id. For a set of
+                // module tasks it is stored once, on the first one.
+                if (saved[0]?.id != null && Object.keys(data.commissions || {}).length > 0) {
+                  syncCommissions({
+                    commissions: data.commissions,
+                    names: data.assignees,
+                    approvedUsers,
+                    perProjectIds,
+                    taskId: saved[0].id,
+                  }).then(({ failed }) => {
+                    if (failed > 0) showToast("Task saved, but some commissions could not be saved.", "error");
+                  });
+                }
               })
               .catch((err) => {
                 console.error("Could not save the new task(s) to the backend:", err);
@@ -4743,10 +4762,23 @@ export default function TasksPage({ darkMode = false, conversations = [], setCon
         <EditTaskModal
           task={editingTask}
           onClose={() => setEditingTaskId(null)}
-          onSave={(patch) => {
+          onSave={(patch, commissionData) => {
             const prevAssignees = getAssignees(editingTask);
             const newlyAdded = (patch.assignees || []).filter((n) => !prevAssignees.includes(n));
             updateTask(editingTask.id, patch);
+            // Per-project employees: save any commission changes made in the popup.
+            if (commissionData) {
+              syncCommissions({
+                initial: commissionData.initialCommissions,
+                commissions: commissionData.commissions,
+                names: patch.assignees,
+                approvedUsers,
+                perProjectIds,
+                taskId: editingTask.id,
+              }).then(({ failed }) => {
+                if (failed > 0) showToast("Task updated, but some commissions could not be saved.", "error");
+              });
+            }
             setEditingTaskId(null);
             if (newlyAdded.length > 0) {
               flagTaskNotification(newlyAdded);
@@ -6571,6 +6603,8 @@ function CreateTaskModal({ onClose, onCreate, assignableUsers, projects, onAddPr
     // Editor, ...) instead generates one task per module for that role —
     // see ROLE_TASK_TEMPLATES.
     roleTemplate: "Custom",
+    // Per-project employees' commission for this task: { [employeeId]: "amount" }
+    commissions: {},
   });
   const canSubmit = form.title.trim() && form.assignees.length > 0 && form.dueDate;
   const modalCard = darkMode ? "bg-slate-900 text-slate-100" : "bg-white";
@@ -6680,6 +6714,13 @@ function CreateTaskModal({ onClose, onCreate, assignableUsers, projects, onAddPr
               <input type="date" value={form.dueDate} onChange={(e) => setForm({ ...form, dueDate: e.target.value })} className={`w-full text-sm border rounded-lg px-2.5 py-2.5 outline-none ${inputCls}`} />
             </div>
           </div>
+          <CommissionFields
+            names={form.assignees}
+            values={form.commissions}
+            onChange={(v) => setForm((f) => ({ ...f, commissions: v }))}
+            darkMode={darkMode}
+            hint={form.roleTemplate !== "Custom" ? "Saved once for the whole set of module tasks. Enter what each person earns for it." : undefined}
+          />
           <SampleFilesField
             files={form.sampleFiles}
             onChange={(v) => setForm((f) => ({ ...f, sampleFiles: v }))}
@@ -6890,7 +6931,12 @@ function EditTaskModal({ task, onClose, onSave, assignableUsers, projects, onAdd
     priority: task.priority,
     dueDate: task.dueDate,
     sampleFiles: task.sampleFiles || [],
+    commissions: {},
   });
+  // What is already saved as commission for this task (per-project people only).
+  const initialCommissions = useCommissionPrefill({ taskId: task.id }, (map) =>
+    setForm((f) => ({ ...f, commissions: { ...map, ...f.commissions } }))
+  );
   const canSubmit = form.title.trim() && form.assignees.length > 0 && form.dueDate;
   const modalCard = darkMode ? "bg-slate-900 text-slate-100" : "bg-white";
   const inputCls = darkMode ? "bg-slate-800 border-slate-700 text-slate-200" : "border-slate-200";
@@ -6976,6 +7022,12 @@ function EditTaskModal({ task, onClose, onSave, assignableUsers, projects, onAdd
               <input type="date" value={form.dueDate} onChange={(e) => setForm({ ...form, dueDate: e.target.value })} className={`w-full text-sm border rounded-lg px-2.5 py-2.5 outline-none ${inputCls}`} />
             </div>
           </div>
+          <CommissionFields
+            names={form.assignees}
+            values={form.commissions}
+            onChange={(v) => setForm((f) => ({ ...f, commissions: v }))}
+            darkMode={darkMode}
+          />
           <SampleFilesField
             files={form.sampleFiles}
             onChange={(v) => setForm((f) => ({ ...f, sampleFiles: v }))}
@@ -7011,7 +7063,7 @@ function EditTaskModal({ task, onClose, onSave, assignableUsers, projects, onAdd
                 priority: form.priority,
                 dueDate: form.dueDate,
                 sampleFiles: form.sampleFiles,
-              })
+              }, { commissions: form.commissions, initialCommissions })
             }
             className="flex-1 bg-gradient-to-r from-violet-600 to-indigo-600 disabled:opacity-40 text-white text-sm font-semibold py-2.5 rounded-full transition"
           >

@@ -39,6 +39,7 @@ import {
 } from "lucide-react";
 import { useAuth, getRoleCategory } from "../AuthContext.jsx";
 import * as projectsApi from "../projectsApi.js";
+import CommissionFields, { syncCommissions, usePerProjectIds, useCommissionPrefill } from "../components/CommissionFields.jsx";
 import { useLiveRefresh, sameJson } from "../useLiveRefresh.js";
 import { listAllDaily, bulkDeleteDaily } from "./reportsApi.js";
 import * as messagesApi from "../messagesApi.js";
@@ -1478,6 +1479,9 @@ function ModulesSection({ project, isAdmin, currentUser, darkMode, cardText, mut
    it applied. */
 export default function ProjectsPage({ darkMode = false, conversations, setConversations, onNavigate = () => {} }) {
   const { user, approvedUsers, canCreate, canEdit, canDelete } = useAuth();
+  // Ids of employees paid per project (not a monthly salary) — used to save
+  // the commission typed in the Create/Edit Project popups.
+  const perProjectIds = usePerProjectIds();
   const canCreateProjects = canCreate("Projects");
   const canEditProjects = canEdit("Projects");
   const canDeleteProjects = canDelete("Projects");
@@ -2265,6 +2269,19 @@ export default function ProjectsPage({ darkMode = false, conversations, setConve
 
     const id = created.id;
 
+    // Per-project employees: save the commission typed in the popup now
+    // that the project has a real id.
+    if (Object.keys(data.commissions || {}).length > 0) {
+      const { failed } = await syncCommissions({
+        commissions: data.commissions,
+        names: [...combinedTeam, ...(data.modules || []).map((m) => m.assignee)],
+        approvedUsers,
+        perProjectIds,
+        projectId: id,
+      });
+      if (failed > 0) showToast("Project created, but some commissions could not be saved.", "error");
+    }
+
     // The zip (if one was picked in the form) only held onto the raw
     // File object until now — this is the first point a real project id
     // exists, so it can actually be uploaded to the backend's zip
@@ -2458,6 +2475,19 @@ export default function ProjectsPage({ darkMode = false, conversations, setConve
     } catch (err) {
       showToast(err.message || "Couldn't save changes to the server.", "error");
       return;
+    }
+
+    // Per-project employees: save any commission changes made in the popup.
+    if (data.commissions) {
+      const { failed } = await syncCommissions({
+        initial: data.initialCommissions,
+        commissions: data.commissions,
+        names: [...combinedTeam, ...(data.modules || []).map((m) => m.assignee)],
+        approvedUsers,
+        perProjectIds,
+        projectId: id,
+      });
+      if (failed > 0) showToast("Project saved, but some commissions could not be saved.", "error");
     }
 
     // FIX (Edit Project's modules never reached the backend): editing an
@@ -3974,6 +4004,8 @@ function CreateProjectModal({ onClose, onSubmit, darkMode, teamOptions = [], exc
     // while creating the project — each one can carry its own assignee,
     // priority, due date, reference URL and an optional file.
     modules: [],
+    // Per-project employees' commission for this project: { [employeeId]: "amount" }
+    commissions: {},
   });
   const [teamOpen, setTeamOpen] = useState(false);
   const [briefError, setBriefError] = useState("");
@@ -4278,6 +4310,13 @@ function CreateProjectModal({ onClose, onSubmit, darkMode, teamOptions = [], exc
             )}
           </div>
 
+          <CommissionFields
+            names={[form.manager, ...form.team, ...form.modules.map((m) => m.assignee)]}
+            values={form.commissions}
+            onChange={(v) => setForm((f) => ({ ...f, commissions: v }))}
+            darkMode={darkMode}
+          />
+
           <div className={`grid grid-cols-1 gap-2 ${isAdmin ? "sm:grid-cols-2" : ""}`}>
             <div className="min-w-0">
               <label className="text-xs font-semibold text-slate-500 mb-1 block">Deadline</label>
@@ -4490,7 +4529,12 @@ function EditProjectModal({ project, onClose, onSubmit, darkMode, teamOptions = 
     requirements: project.requirements || "",
     additionalInfo: project.additionalInfo || "",
     completionLink: project.completionLink || "",
+    commissions: {},
   });
+  // What is already saved as commission for this project (per-project people only).
+  const initialCommissions = useCommissionPrefill({ projectId: /^\d+$/.test(String(project.id)) ? Number(project.id) : null }, (map) =>
+    setForm((f) => ({ ...f, commissions: { ...map, ...f.commissions } }))
+  );
   const [newModule, setNewModule] = useState({ name: "", assignee: "", priority: "Medium", dueDate: "", url: "", price: "", fileEntry: null });
   const [moduleFileError, setModuleFileError] = useState("");
   const [teamOpen, setTeamOpen] = useState(false);
@@ -4801,6 +4845,13 @@ function EditProjectModal({ project, onClose, onSubmit, darkMode, teamOptions = 
             )}
           </div>
 
+          <CommissionFields
+            names={[form.manager, ...form.team, ...form.modules.map((m) => m.assignee)]}
+            values={form.commissions}
+            onChange={(v) => setForm((f) => ({ ...f, commissions: v }))}
+            darkMode={darkMode}
+          />
+
           {/* Duration — start date + deadline, both editable so the
               project's timeline can be extended (or pulled in) at any
               point. */}
@@ -4980,7 +5031,7 @@ function EditProjectModal({ project, onClose, onSubmit, darkMode, teamOptions = 
           <button onClick={onClose} className={`flex-1 border text-sm font-semibold py-2.5 rounded-full ${inputCls}`}>Cancel</button>
           <button
             disabled={!canSubmit}
-            onClick={() => onSubmit(form)}
+            onClick={() => onSubmit({ ...form, initialCommissions })}
             className="flex-1 bg-gradient-to-r from-violet-600 to-indigo-600 hover:opacity-90 disabled:opacity-40 text-white text-sm font-semibold py-2.5 rounded-full transition"
           >
             Save Changes

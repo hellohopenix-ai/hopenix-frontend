@@ -1125,8 +1125,9 @@ export function AuthProvider({ children }) {
    *  signupWithGoogle / registerUser) re-applies it via
    *  withProfileOverride() — so the saved photo/phone reliably comes
    *  back after logging back in. */
-  const ADMIN_EDITABLE_PROFILE_FIELDS = ["salary", "bankName", "accountTitle", "accountNumber", "iban", "branchCode"];
+  const ADMIN_EDITABLE_PROFILE_FIELDS = ["salary", "payType", "bankName", "accountTitle", "accountNumber", "iban", "branchCode"];
   const FIELD_NAME_TO_BACKEND = {
+    payType: "pay_type",
     bankName: "bank_name",
     accountTitle: "account_title",
     accountNumber: "account_number",
